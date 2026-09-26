@@ -1,0 +1,27 @@
+{
+  "dims": [
+    6,
+    8,
+    10,
+    12,
+    14
+  ],
+  "routes": [
+    "powers",
+    "endpoints",
+    "mixed",
+    "powers_2d",
+    "endpoints_2d"
+  ],
+  "atol": 1e-08,
+  "rtol": 1e-06,
+  "chunk_size": 128,
+  "budget": 200000,
+  "permutation_checks": 3,
+  "paired_permutations": 10000,
+  "sesoi": 0.01,
+  "seed": 0,
+  "threads_per_worker": 1,
+  "pair_details": "none",
+  "stream_results": true
+}

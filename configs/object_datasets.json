@@ -1,0 +1,196 @@
+{
+  "mutag": {
+    "format": "PyG-TUDataset",
+    "name": "MUTAG",
+    "graphs": 188,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "nci1": {
+    "format": "PyG-TUDataset",
+    "name": "NCI1",
+    "graphs": 4110,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "nci109": {
+    "format": "PyG-TUDataset",
+    "name": "NCI109",
+    "graphs": 4127,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "enzymes": {
+    "format": "PyG-TUDataset",
+    "name": "ENZYMES",
+    "graphs": 600,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "proteins": {
+    "format": "PyG-TUDataset",
+    "name": "PROTEINS",
+    "graphs": 1113,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "zinc-subset": {
+    "format": "PyG-ZINC",
+    "name": "subset",
+    "graphs": 12000,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "zinc-full": {
+    "format": "PyG-ZINC",
+    "name": "full",
+    "graphs": 249456,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "summary_only"
+  },
+  "qm9": {
+    "format": "PyG-QM9",
+    "name": "QM9",
+    "graphs": 130831,
+    "domains": [
+      "nodes",
+      "edges",
+      "pairs"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "molhiv": {
+    "format": "OGB",
+    "name": "ogbg-molhiv",
+    "graphs": 41127,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": null,
+    "evidence": "archived_report"
+  },
+  "mnist": {
+    "format": "PyG-GNNBenchmarkDataset",
+    "name": "MNIST",
+    "graphs": 70000,
+    "domains": [
+      "nodes"
+    ],
+    "max_compare_distance": null,
+    "evidence": "summary_only"
+  },
+  "cifar10": {
+    "format": "PyG-GNNBenchmarkDataset",
+    "name": "CIFAR10",
+    "graphs": 60000,
+    "domains": [
+      "nodes"
+    ],
+    "max_compare_distance": null,
+    "evidence": "summary_only"
+  },
+  "cluster": {
+    "format": "PyG-GNNBenchmarkDataset",
+    "name": "CLUSTER",
+    "graphs": 12000,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": 5,
+    "evidence": "summary_only"
+  },
+  "pattern": {
+    "format": "PyG-GNNBenchmarkDataset",
+    "name": "PATTERN",
+    "graphs": 14000,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": 5,
+    "evidence": "summary_only"
+  },
+  "voc": {
+    "format": "PyG-VOCSuperpixels",
+    "name": "edge_wt_region_boundary",
+    "graphs": 11355,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": 5,
+    "evidence": "summary_only",
+    "slic_compactness": 30,
+    "loader_note": "Preset follows the GNNPlus configuration; original topology manifest unavailable."
+  },
+  "ppa": {
+    "format": "OGB",
+    "name": "ogbg-ppa",
+    "graphs": 158100,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": 5,
+    "evidence": "summary_only"
+  },
+  "pcba": {
+    "format": "OGB",
+    "name": "ogbg-molpcba",
+    "graphs": 437929,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": 5,
+    "evidence": "summary_only"
+  },
+  "peptides-functional": {
+    "format": "OGB",
+    "name": "peptides-functional",
+    "graphs": 15535,
+    "domains": [
+      "nodes",
+      "edges"
+    ],
+    "max_compare_distance": null,
+    "evidence": "summary_only"
+  }
+}

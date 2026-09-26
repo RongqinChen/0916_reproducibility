@@ -1,0 +1,25 @@
+{
+  "orders": [
+    2,
+    3
+  ],
+  "seeds": [
+    100,
+    200,
+    300
+  ],
+  "q": 8,
+  "width": 16,
+  "layers": 2,
+  "physical_batch": 32,
+  "cpu_workers": 1,
+  "threads": 4,
+  "epochs": 20,
+  "lr": 0.0001,
+  "weight_decay": 1e-05,
+  "early_stop_loss": 0.2,
+  "threshold": 72.34,
+  "chunk_size": 128,
+  "decimals": 8,
+  "max_state_elements": 1200000000
+}

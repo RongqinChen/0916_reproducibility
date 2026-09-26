@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv*/
+data/
+topology/
+outputs/
+results/
+wandb/
+*.pt
+*.pth
