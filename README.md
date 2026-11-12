@@ -17,7 +17,7 @@ bash tools/run_rebuttal.sh protein-predict
 bash tools/run_rebuttal.sh protein-report
 ```
 
-运行前按说明设置 `BREC_FILE`、`MUTAG_TOPOLOGY`、`TU_DATA_ROOT` 等路径。代码准备和静态检查不等于实验完成；本机没有运行实验。
+运行前按说明设置 `BREC_FILE`、`MUTAG_TOPOLOGY`、`TU_DATA_ROOT` 等路径。各实验进度见补充实验说明。
 
 ## 阅读代码
 
