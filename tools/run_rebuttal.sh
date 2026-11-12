@@ -11,6 +11,10 @@ REBUTTAL_OUT="${REBUTTAL_OUT:-outputs/rebuttal}"
 PROTEIN_DATASET="${PROTEIN_DATASET:-ENZYMES}"
 PROTEIN_DEVICE="${PROTEIN_DEVICE:-cpu}"
 TU_DATA_ROOT="${TU_DATA_ROOT:-data/tu}"
+BREC_ARGS=()
+if [[ -n "${BREC_WORKERS:-}" ]]; then
+  BREC_ARGS+=(--workers "$BREC_WORKERS")
+fi
 
 case "${1:-}" in
   mechanisms)
@@ -20,14 +24,14 @@ case "${1:-}" in
     export PYTHONHASHSEED=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec"
+    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec" "${BREC_ARGS[@]}" "${@:2}"
     ;;
   brec-reproduce)
     export PYTHONHASHSEED=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run1"
-    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run2"
+    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run1" "${BREC_ARGS[@]}" "${@:2}"
+    "$REBUTTAL_PYTHON" -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run2" "${BREC_ARGS[@]}" "${@:2}"
     "$REBUTTAL_PYTHON" -m brec.reproducibility --first "$REBUTTAL_OUT/brec_run1" --second "$REBUTTAL_OUT/brec_run2" --out "$REBUTTAL_OUT/brec_reproducibility.json"
     ;;
   objects)

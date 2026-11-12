@@ -8,7 +8,7 @@
   "relabels": 8,
   "reliability_relabels": 2,
   "seed": 20261112,
-  "seconds_per_condition": 300,
-  "memory_gib": 4,
+  "seconds_per_condition": null,
+  "memory_gib": 52,
   "max_candidate_edges": 2000000
 }
