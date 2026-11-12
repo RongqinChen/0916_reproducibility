@@ -10,7 +10,8 @@ import time
 
 from .common import (Budget, atomic_json, configuration, hard_wall_limit,
                      run_directory, sha256)
-from .protein_data import ProteinInputs, VARIANTS, load_prepared
+from .protein_data import ProteinInputs, load_prepared
+from .protein_encodings import ENCODINGS, validate_config
 
 
 def configure_torch(seed, config, device):
@@ -110,6 +111,8 @@ def train_one_run(prepared, job, variant, split, seed, config, device, identity)
         torch.cuda.synchronize(device)
     atomic_json(job / 'complete.json', {
         'status': 'training_complete', 'identity_sha256': identity, 'variant': variant,
+        'encoding': ENCODINGS[variant], 'structural_width': config['structural_width'],
+        'tuple_node_context': config['tuple_node_context'],
         'fold': split['fold'], 'seed': seed, 'initialization_seed': actual_seed,
         'initial_state_sha256': initial_hash, 'initial_file_sha256': sha256(job / 'initial.pt'),
         'checkpoint_sha256': sha256(job / 'best.pt'), 'history_sha256': sha256(job / 'history.json'),
@@ -127,20 +130,23 @@ def train_one_run(prepared, job, variant, split, seed, config, device, identity)
 
 def train(args):
     config = configuration(args.config)
+    validate_config(config)
     prepared_summary, prepared_manifest = load_prepared(args.prepared)
     config = {**config, 'dataset': prepared_summary['dataset']}
     prepared_config = prepared_manifest['identity']['configuration']
-    for key in ('folds', 'validation_fraction', 'split_seed'):
+    for key in ('folds', 'validation_fraction', 'split_seed', 'encoding_protocol',
+                'structural_width', 'variants', 'tuple_node_context'):
         if config[key] != prepared_config[key]:
-            raise ValueError(f'Training split setting {key} differs from prepared data')
+            raise ValueError(f'Training setting {key} differs from prepared data')
     split_list = json.loads((args.prepared / 'splits.json').read_text())
     if len(split_list) != config['folds']:
         raise ValueError('Prepared folds do not match training configuration')
     seeds = args.seeds if args.seeds is not None else config['seeds']
     folds = args.folds if args.folds is not None else list(range(config['folds']))
-    variants = args.variants if args.variants is not None else list(VARIANTS)
-    if (len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds)
+    variants = args.variants if args.variants is not None else config['variants']
+    if (len(set(seeds)) != len(seeds) or set(seeds) - set(config['seeds'])
             or len(set(folds)) != len(folds) or len(set(variants)) != len(variants)
+            or set(variants) - set(config['variants'])
             or any(fold not in range(config['folds']) for fold in folds)):
         raise ValueError('Invalid job selection')
     frozen = {**config, 'prepared_identity': prepared_summary['identity_sha256'],

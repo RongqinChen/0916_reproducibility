@@ -20,8 +20,10 @@ class ControlledClassifier(nn.Module):
             for _ in range(config['layers'])
         ])
         self.epsilon = nn.Parameter(torch.zeros(config['layers']))
+        self.tuple_node_context = config['tuple_node_context']
+        structural_input = config['structural_width'] + (3 * hidden if self.tuple_node_context else 0)
         self.structural = nn.Sequential(
-            nn.Linear(27, hidden), nn.ReLU(), nn.Dropout(config['dropout']),
+            nn.Linear(structural_input, hidden), nn.ReLU(), nn.Dropout(config['dropout']),
             nn.Linear(hidden, hidden), nn.ReLU(),
         )
         self.output = nn.Sequential(
@@ -29,6 +31,14 @@ class ControlledClassifier(nn.Module):
             nn.Dropout(config['dropout']), nn.Linear(hidden, classes),
         )
         self.checkpoint_chunks = config['checkpoint_structural_chunks']
+
+    def _sum_structural_chunk(self, load_block, node_states):
+        # Pass node states explicitly for their gradients and this device's RNG.
+        features, coords = load_block()
+        if self.tuple_node_context:
+            features = torch.cat((features, node_states[coords[0]],
+                                  node_states[coords[1]], node_states[coords[2]]), 1)
+        return self.structural(features).sum(0)
 
     def forward(self, x, edge_index, edge_attr, structural_chunks, total_triples):
         # Native graph attributes pass through the message-passing backbone.
@@ -41,13 +51,12 @@ class ControlledClassifier(nn.Module):
 
         # Mix each complete structural row before averaging over triples.
         structural_sum = None
-        for block in structural_chunks:
-            block_values = (
-                checkpoint(self.structural, block, use_reentrant=False)
+        for load_block in structural_chunks:
+            block_sum = (
+                checkpoint(self._sum_structural_chunk, load_block, node_states, use_reentrant=False)
                 if self.training and self.checkpoint_chunks
-                else self.structural(block)
+                else self._sum_structural_chunk(load_block, node_states)
             )
-            block_sum = block_values.sum(0)
             structural_sum = block_sum if structural_sum is None else structural_sum + block_sum
         if structural_sum is None or total_triples <= 0:
             raise ValueError('Nonempty full ordered-triple features are required')

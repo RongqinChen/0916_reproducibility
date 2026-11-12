@@ -8,7 +8,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
-    parser.add_argument('experiment', choices=['mechanisms', 'brec', 'objects', 'protein'])
+    parser.add_argument('experiment', choices=['mechanisms', 'brec', 'protein'])
     if len(sys.argv) == 1 or sys.argv[1] in ('-h', '--help'):
         parser.print_help()
         return

@@ -7,7 +7,8 @@ import time
 import numpy as np
 
 from .common import atomic_json, atomic_npz, sha256
-from .protein_data import ProteinInputs, VARIANTS, load_prepared
+from .protein_data import ProteinInputs, load_prepared
+from .protein_encodings import COMPARISONS, ENCODINGS
 from .protein_training import configure_torch, evaluate_graphs, build_model
 from .tu_data import load_graph
 
@@ -51,9 +52,10 @@ def predict(args):
 
 def report(args):
     """Pool held-out predictions and compare variants using paired seeds."""
-    prepared = json.loads((args.prepared / 'summary.json').read_text())
+    prepared, _ = load_prepared(args.prepared)
     splits = json.loads((args.prepared / 'splits.json').read_text())
     groups, seen, costs, pairing, common_config = {}, set(), [], {}, None
+    fold_outputs, validation_scores = {}, {}
     for run in args.runs:
         manifest = json.loads((run / 'manifest.json').read_text())
         config = manifest['identity']['configuration']
@@ -85,11 +87,14 @@ def report(args):
             with np.load(job / 'predictions.npz', allow_pickle=False) as data:
                 if data['graph_ids'].tolist() != splits[done['fold']]['test']:
                     raise ValueError('Prediction graph IDs differ from the frozen outer test')
-                groups.setdefault((done['seed'], done['variant']), []).append(
-                    (data['graph_ids'].copy(), data['targets'].copy(), data['logits'].copy()))
+                chunk = (data['graph_ids'].copy(), data['targets'].copy(), data['logits'].copy())
+                groups.setdefault((done['seed'], done['variant']), []).append(chunk)
+                fold_outputs[key] = chunk
+                validation_scores[key] = done['selection_validation_nll']
             costs.append({key: done[key] for key in ('fold', 'seed', 'variant', 'training_seconds',
                                                      'sampled_process_rss_peak_bytes', 'gpu_peak_allocated_bytes')})
-    required = {(fold, seed, variant) for fold in range(len(splits)) for seed in config['seeds'] for variant in VARIANTS}
+    variants = config['variants']
+    required = {(fold, seed, variant) for fold in range(len(splits)) for seed in config['seeds'] for variant in variants}
     if seen != required:
         raise ValueError(f'Full report requires exactly the frozen job matrix; missing={sorted(required-seen)}, extra={sorted(seen-required)}')
     for pair in pairing.values():
@@ -98,6 +103,13 @@ def report(args):
         histories = [json.loads((item[-1] / 'history.json').read_text()) for item in pair]
         if any([x['train_order'] for x in h] != [x['train_order'] for x in histories[0]] for h in histories[1:]):
             raise ValueError('Variants used different actual graph orders')
+    selected = []
+    for seed in config['seeds']:
+        for fold in range(len(splits)):
+            winner = min(variants, key=lambda variant: (validation_scores[fold, seed, variant], variants.index(variant)))
+            groups.setdefault((seed, 'validation_selected'), []).append(fold_outputs[fold, seed, winner])
+            selected.append({'fold': fold, 'seed': seed, 'variant': winner,
+                             'validation_nll': validation_scores[fold, seed, winner]})
     results = []
     target_reference = np.asarray([int(load_graph(args.prepared / 'graphs' / f'graph{i:04d}.npz')['y'])
                                    for i in range(prepared['graph_count'])])
@@ -117,26 +129,38 @@ def report(args):
                         'accuracy': float(np.mean(logits.argmax(1) == targets)),
                         'nll': float(-log_probability[np.arange(len(targets)), targets].mean())})
     lookup = {(r['seed'], r['variant']): r for r in results}
-    comparisons = [{'seed': seed, 'comparison': f'joint_minus_{other}',
-                    'accuracy_difference': lookup[seed, 'joint']['accuracy'] - lookup[seed, other]['accuracy'],
-                    'nll_difference': lookup[seed, 'joint']['nll'] - lookup[seed, other]['nll']}
-                   for seed in config['seeds'] for other in ('base', 'nonjoint')]
+    comparisons = [{'seed': seed, 'comparison': f'{left}_minus_{right}',
+                    'primary': [left, right] == config['primary_comparison'],
+                    'accuracy_difference': lookup[seed, left]['accuracy'] - lookup[seed, right]['accuracy'],
+                    'nll_difference': lookup[seed, left]['nll'] - lookup[seed, right]['nll']}
+                   for seed in config['seeds'] for left, right in COMPARISONS
+                   if left in variants and right in variants]
     construction = [json.loads((args.prepared / 'records' / f'graph{i:04d}.json').read_text())['construction']
                     for i in range(prepared['graph_count'])]
     seed_summary = {}
-    for variant in VARIANTS:
+    for variant in [*variants, 'validation_selected']:
         seed_summary[variant] = {}
         for metric in ('accuracy', 'nll'):
             values = [row[metric] for row in results if row['variant'] == variant]
             seed_summary[variant][metric] = {'mean': float(np.mean(values)),
                                              'sample_std': float(np.std(values, ddof=1)) if len(values) > 1 else None,
                                              'seed_count': len(values)}
-    atomic_json(args.out, {'status': 'complete', 'prepared_identity': prepared['identity_sha256'],
+    atomic_json(args.out, {'status': 'complete', 'dataset': prepared['dataset'],
+                           'prepared_identity': prepared['identity_sha256'],
                            'per_seed_oof': results, 'per_variant_seed_summary': seed_summary,
+                           'encoding_settings': {variant: ENCODINGS[variant] for variant in variants},
+                           'primary_comparison': config['primary_comparison'],
+                           'primary_metric': 'accuracy',
+                           'model_structural_width': config['structural_width'],
+                           'tuple_node_context': config['tuple_node_context'],
+                           'validation_selected_jobs': selected,
+                           'selection_policy': 'Choose encoding by inner validation NLL within each fold/seed; ties follow frozen variant order. Test metrics are never used for this selection.',
                            'paired_comparisons': comparisons,
                            'training_costs': costs,
                            'feature_construction_costs': {
+                               'total_preparation_seconds': sum(x['total_preparation_seconds'] for x in construction),
+                               'cached_bytes': sum(x['cached_bytes'] for x in construction),
                                'base_seconds': sum(x['base_seconds'] for x in construction),
                                'joint_extra_seconds': sum(x['joint_extra_seconds'] for x in construction),
-                               'nonjoint_extra_seconds': sum(x['nonjoint_extra_seconds'] for x in construction)},
-                           'scope': 'One fixed protein task. Folds×seeds are not independent datasets. Equal width/updates do not imply equal construction compute or a 3-FWL necessity result.'})
+                               'construction_policy': 'One shared canonical bank for the full grid; endpoint and basis transforms use this cache.'},
+                           'scope': 'Results for the named dataset. All variants share 64 structural slots, backbone, tuple-node context, readout and updates. The zero-encoding baseline retains the same tuple-node readout. Folds×seeds are not independent datasets; finite joint encodings and predictive gains do not establish full 3-FWL necessity.'})
