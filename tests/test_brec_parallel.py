@@ -33,7 +33,20 @@ def sleeping_worker(task):
             'started': started, 'ended': time.monotonic(), 'pid': os.getpid()}
 
 
+def crashing_worker(task):
+    os._exit(7)
+
+
 class ParallelSchedulingTests(unittest.TestCase):
+    def test_worker_crash_cannot_be_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, 'worker exited 7 without a result'):
+                run_tasks([example_task(0)], crashing_worker, out,
+                          workers=1, memory_gib=3, reserve_gib=0, seed=0)
+            self.assertFalse((out / 'records' / 'task0.json').exists())
+            self.assertEqual(multiprocessing.active_children(), [])
+
     def test_workers_overlap(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
@@ -108,8 +121,8 @@ class ScientificParityTests(unittest.TestCase):
                 nx.relabel_nodes(graphs[2], mapping), nodes=range(4), header=False).strip()
             source = root / 'brec.npy'
             np.save(source, data, allow_pickle=False)
-            config = {'expected_brec_sha256': sha256(source), 'bases': ['monomial'],
-                      'variants': ['polynomial'], 'q_values': [2], 'mean_p_values': [1, 2, 4],
+            config = {'expected_brec_sha256': sha256(source), 'bases': ['monomial', 'chebyshev'],
+                      'variants': ['polynomial', 'endpoint'], 'q_values': [2, 16], 'mean_p_values': [1, 2, 4],
                       'precision_bits': [16, 32], 'relabels': 1, 'reliability_relabels': 1,
                       'seed': 0, 'seconds_per_condition': None, 'memory_gib': 3,
                       'max_candidate_edges': 10000}
@@ -138,7 +151,7 @@ class ScientificParityTests(unittest.TestCase):
                                          if key not in ('elapsed_seconds', 'identity_sha256')}
                 return result
 
-            self.assertEqual(len(records(outputs[0])), 8)
+            self.assertEqual(len(records(outputs[0])), 64)
             self.assertEqual(records(outputs[0]), records(outputs[1]))
             self.assertEqual(json.loads((outputs[0] / 'summary.json').read_text()),
                              json.loads((outputs[1] / 'summary.json').read_text()))

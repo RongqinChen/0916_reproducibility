@@ -112,3 +112,11 @@ bash tools/run_rebuttal.sh protein-report
 - 蛋白质：`protein.py` 只解析命令；`protein_data.py` 准备输入，`protein_training.py` 训练，`protein_results.py` 预测与汇总，`protein_model.py` 定义模型。
 
 每次运行的 `manifest.json` 记录配置、输入、代码和环境身份。仓库不再保留旧结果表、静态源码清单或归档导出工具。
+
+## BREC 代码验证
+
+```bash
+python -m unittest discover -s tests -p 'test_brec_*.py' -v
+```
+
+测试覆盖区间运算的精确包络、独立分数公式、两种基与全部默认 Q 预算、累积均值矩、三元提升、重复行匹配、非自逆重标号、官方 reliability 映射、并行与重复运行一致性、内存限制、中断清理、原子保存及续跑身份。配置错误在启动工作进程前拒绝；复现检查同时核对条件覆盖、记录身份和汇总一致性。这些测试使用小图，不替代正式 BREC 全部条件的运行与结果审查。

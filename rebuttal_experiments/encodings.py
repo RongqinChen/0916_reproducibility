@@ -71,7 +71,9 @@ def polynomial_bank(adjacency, q, basis='monomial', mode='float64', bits=128, bu
     bank = [eye, eye + matrix if basis == 'shifted' else matrix]
     for _ in range(2, q + 1):
         product = matmul(matrix, bank[-1], budget)
-        bank.append(product if basis == 'monomial' else make(2) * product - bank[-2])
+        # Keep the ndarray on the left: an Interval scalar otherwise tries to
+        # coerce the entire matrix to Fraction instead of multiplying its entries.
+        bank.append(product if basis == 'monomial' else product * make(2) - bank[-2])
     return np.stack(bank)
 
 

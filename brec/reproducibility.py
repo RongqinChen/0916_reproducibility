@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import itertools
 import json
 from pathlib import Path
 
-from rebuttal_experiments.common import atomic_json
+from rebuttal_experiments.common import atomic_json, identity_hash
 
 
 def snapshot(root):
@@ -15,18 +17,50 @@ def snapshot(root):
         raise ValueError(f'Incomplete run: {root}')
     if config['determinism']['policy'] != 'brec-determinism-v1':
         raise ValueError('Run does not record the strict BREC policy')
+    identity = manifest['identity_sha256']
+    if identity != identity_hash(manifest['identity']):
+        raise ValueError('Manifest identity checksum mismatch')
+    dimensions = [config[key] for key in ('bases', 'variants', 'q_values', 'mean_p_values',
+                                          'executed_pair_ids')]
+    if any(not values or len(set(values)) != len(values) for values in dimensions):
+        raise ValueError('Empty or duplicate configured conditions')
+    expected = {}
+    grouped = {}
+    for basis, variant, q in itertools.product(config['bases'], config['variants'], config['q_values']):
+        for readout, p in [('multiset', 1), *(('mean', p) for p in config['mean_p_values'])]:
+            stem = f'{basis}_{variant}_q{q}_{readout}_p{p}'
+            grouped[stem] = Counter()
+            for pid in config['executed_pair_ids']:
+                expected[f'{stem}_pair{pid:03d}.json'] = {
+                    'basis': basis, 'variant': variant, 'q': q, 'readout': readout,
+                    'p': p, 'pair_id': pid, 'order': 2, 'identity_sha256': identity}
     records = {}
     for path in sorted((root / 'records').glob('*.json')):
         record = json.loads(path.read_text())
+        if path.name not in expected or any(record.get(key) != value
+                                           for key, value in expected[path.name].items()):
+            raise ValueError(f'Unexpected condition or record identity: {path.name}')
         if record['status'] not in ('certified_different', 'certified_equal', 'unresolved'):
             raise ValueError(f'Failed or resource-limited condition: {path.name}')
         records[path.name] = {key: value for key, value in record.items() if key != 'elapsed_seconds'}
-    expected = (len(config['bases']) * len(config['variants']) * len(config['q_values'])
-                * (1 + len(config['mean_p_values'])) * len(config['executed_pair_ids']))
-    if not records or len(records) != expected:
+        grouped[path.name.rsplit('_pair', 1)[0]][record['status']] += 1
+    if records.keys() != expected.keys():
         raise ValueError('Result records do not cover the requested BREC conditions')
+    summary = json.loads((root / 'summary.json').read_text())
+    settings = summary['settings']
+    if len(settings) != len(grouped) or {row['setting'] for row in settings} != grouped.keys():
+        raise ValueError('Summary does not cover the requested settings')
+    for row in settings:
+        counts = grouped[row['setting']].copy()
+        missing = 400 - sum(counts.values())
+        if missing:
+            counts['not_executed'] = missing
+        if (row['denominator'] != 400 or row['counts'] != dict(counts)
+                or row['certified_detection_lower_bound'] != counts['certified_different']
+                or row['detection_upper_bound'] != 400 - counts['certified_equal']):
+            raise ValueError(f'Summary differs from result records: {row["setting"]}')
     return {'identity': manifest['identity'], 'records': records,
-            'summary': json.loads((root / 'summary.json').read_text())}
+            'summary': summary}
 
 
 def main(argv=None):

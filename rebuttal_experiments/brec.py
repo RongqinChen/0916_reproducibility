@@ -6,6 +6,7 @@ import itertools
 import json
 import math
 import time
+import traceback
 from collections import Counter
 from functools import partial
 from pathlib import Path
@@ -21,6 +22,37 @@ from .common import (Budget, ResourceLimit, atomic_json,
                      sha256, simple_adjacency)
 from .encodings import feature_matrix, moments
 from .scheduling import estimate_bytes, ordered_cpus, run_tasks
+
+
+def validate_configuration(config):
+    """Reject invalid protocols before creating output or starting workers."""
+    choices = {'bases': {'monomial', 'chebyshev'},
+               'variants': {'polynomial', 'endpoint'}}
+    for key, allowed in choices.items():
+        values = config.get(key)
+        if (not isinstance(values, list) or not values
+                or any(not isinstance(x, str) or x not in allowed for x in values)
+                or len(set(values)) != len(values)):
+            raise ValueError(f'{key} must be a nonempty list of distinct supported values')
+    for key in ('q_values', 'mean_p_values', 'precision_bits'):
+        values = config.get(key)
+        minimum = 2 if key == 'precision_bits' else 1
+        if (not isinstance(values, list) or not values
+                or any(type(x) is not int or x < minimum for x in values)
+                or len(set(values)) != len(values)):
+            raise ValueError(f'{key} must contain distinct integers >= {minimum}')
+    if config['precision_bits'] != sorted(config['precision_bits']):
+        raise ValueError('precision_bits must increase')
+    for key, minimum in (('relabels', 1), ('reliability_relabels', 0),
+                         ('seed', 0), ('max_candidate_edges', 1)):
+        if type(config.get(key)) is not int or config[key] < minimum:
+            raise ValueError(f'{key} must be an integer >= {minimum}')
+    for key in ('memory_gib', 'seconds_per_condition'):
+        value = config.get(key)
+        if key == 'seconds_per_condition' and key in config and value is None:
+            continue
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f'{key} must be positive and finite; only seconds_per_condition may be null')
 
 
 def load_brec_data(path, expected_sha256):
@@ -140,7 +172,7 @@ def condition_record(data, config, task):
     except (ResourceLimit, MemoryError) as exc:
         row.update(status='resource_limited', reason=str(exc))
     except Exception as exc:
-        row.update(status='implementation_error', reason=repr(exc))
+        row.update(status='implementation_error', reason=repr(exc), traceback=traceback.format_exc())
     return row
 
 
@@ -162,6 +194,9 @@ def pending_conditions(data, ids, config, out, identity):
                 old = json.loads(target.read_text())
                 if any(old.get(key) != value for key, value in row.items()):
                     raise ValueError('Record identity mismatch')
+                if old.get('status') not in (DIFFERENT, EQUAL, UNRESOLVED,
+                                              'resource_limited', 'implementation_error'):
+                    raise ValueError(f'Invalid saved condition status: {target}')
                 if old['status'] == 'implementation_error':
                     raise ValueError(f'Inspect the saved implementation error before resuming: {target}')
                 continue
@@ -208,9 +243,11 @@ def main(argv=None):
     if workers < 1 or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0:
         parser.error('Positive --workers and finite nonnegative --reserve-gib required')
     config = configuration(args.config)
+    try:
+        validate_configuration(config)
+    except ValueError as exc:
+        parser.error(str(exc))
     config = {**config, 'determinism': start_brec(config['seed'])}
-    if not math.isfinite(config['memory_gib']) or config['memory_gib'] <= 0:
-        parser.error('Configuration memory_gib must be positive and finite')
     config = {**config, 'scheduling': {'workers': workers, 'reserve_gib': args.reserve_gib,
                                      'memory_scope': 'parent_and_workers_rss',
                                      'cpu_order': ordered_cpus()}}
