@@ -47,7 +47,20 @@ bash tools/run_rebuttal.sh objects
 
 均值差区间排除 0 才报告区分；完整多重集用投影计数或兼容匹配缺口确认。区间重叠或存在兼容完美匹配不能证明相等，记录为未确定。每侧保留 8 次固定重标号、官方 reliability 对照及 2 次额外置换；图同构仅用于对齐已知同构对照，不参与主图对编码。
 
-每条件默认 300 秒、4 GiB 和 200 万匹配边。资源上限应在正式结果前按服务器能力固定。输出为：
+默认按可用 CPU 数并行运行独立条件，每个进程的数值库保持单线程；CPU 绑定复用原 `brec/schedule.py` 的物理核优先顺序。内存 `memory_gib: 52` 是调度器与所有工作进程的 RSS 总预算，调度器按任务预估内存准入并监控实际 RSS，同时保留默认 8 GiB 系统可用内存；共享页可能重复计入 RSS，统计偏保守。超出总预算时停止占用最大的未完成条件并记录 `resource_limited / scheduler_memory_limit`，不自动改变数值路径。结果逐条件原子保存，中断会清理工作进程，`--resume` 跳过已有记录并继续未完成条件。
+
+不设每条件时间上限（`seconds_per_condition: null`），兼容匹配边上限仍为 200 万。需要限时时，将 `seconds_per_condition` 设为正数秒数。资源设置应在正式结果前按服务器能力固定；修改代码、配置或并发设置后使用新输出目录，已启动的进程继续使用启动时读取的设置。
+
+例如限制最多 28 个进程，总内存预算仍为 52 GiB：
+
+```bash
+export REBUTTAL_OUT=outputs/rebuttal_parallel
+bash tools/run_rebuttal.sh brec --workers 28
+# 同一代码、配置和并发设置下续跑：
+bash tools/run_rebuttal.sh brec --workers 28 --resume
+```
+
+也可设置 `BREC_WORKERS=28`，适用于 `brec` 和 `brec-reproduce`。`--reserve-gib` 调整系统可用内存保留量。输出为：
 
 - `records/*.json`：设置、判别、精度尝试、重标号结果及 `evidence` 数值摘要。摘要包含区分通道与差值、计数界或匹配缺口，不再重复导出整份特征见证。
 - `summary.json`：每设置分母 400，分别列已确认区分、已确认相等、未确定、资源不足和未执行项。区分下界较大不自动证明真实表达力更强。
@@ -94,7 +107,7 @@ bash tools/run_rebuttal.sh protein-report
 
 ## 代码阅读顺序
 
-- BREC：`brec.py` 组织运行，`encodings.py` 生成通道，`readouts.py` 作判别。
+- BREC：`brec.py` 组织运行，`scheduling.py` 并行调度，`encodings.py` 生成通道，`readouts.py` 作判别。
 - 对象域：`objects.py` 组织控制和汇总，`object_comparison.py` 保存数值计算。
 - 蛋白质：`protein.py` 只解析命令；`protein_data.py` 准备输入，`protein_training.py` 训练，`protein_results.py` 预测与汇总，`protein_model.py` 定义模型。
 

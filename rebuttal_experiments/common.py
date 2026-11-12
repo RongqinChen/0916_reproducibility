@@ -124,15 +124,18 @@ class ResourceLimit(RuntimeError):
 
 
 class Budget:
+    """Check memory and an optional time limit; seconds=None disables the deadline."""
+
     def __init__(self, seconds=300, memory_gib=4):
-        if not math.isfinite(seconds) or seconds <= 0 or memory_gib <= 0:
-            raise ValueError('Positive finite resource limits are required')
-        self.deadline = time.monotonic() + seconds
-        self.memory_bytes = int(memory_gib * 2**30)
+        if ((seconds is not None and (not math.isfinite(seconds) or seconds <= 0))
+                or not math.isfinite(memory_gib) or memory_gib <= 0):
+            raise ValueError('Positive finite resource limits are required; seconds may be None')
         self.started = time.monotonic()
+        self.deadline = None if seconds is None else self.started + seconds
+        self.memory_bytes = int(memory_gib * 2**30)
 
     def check(self, estimated_bytes=0):
-        if time.monotonic() > self.deadline:
+        if self.deadline is not None and time.monotonic() > self.deadline:
             raise ResourceLimit('wall_time_limit')
         if estimated_bytes > self.memory_bytes:
             raise ResourceLimit('estimated_memory_limit')
@@ -147,7 +150,10 @@ class Budget:
 
 @contextlib.contextmanager
 def hard_wall_limit(seconds):
-    """Enforce a per-condition wall limit on Unix main-thread execution."""
+    """Enforce a Unix wall limit, or leave existing timers alone when seconds=None."""
+    if seconds is None:
+        yield
+        return
     import signal
     def expired(signum, frame):
         raise ResourceLimit('wall_time_limit')

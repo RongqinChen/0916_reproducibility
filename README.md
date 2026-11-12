@@ -26,6 +26,7 @@ bash tools/run_rebuttal.sh protein-report
 | `rebuttal_experiments/__main__.py` | 选择实验入口 |
 | `mechanisms.py` | 两项精确机制对照 |
 | `brec.py` | BREC 配置循环、重标号对照及结果汇总 |
+| `scheduling.py` | BREC 多进程调度、CPU 绑定及总内存预算监控 |
 | `encodings.py`、`intervals.py`、`readouts.py` | 编码公式、区间算术和判别规则 |
 | `objects.py`、`object_comparison.py` | 对象域实验流程、特征构造及比较 |
 | `protein.py` | 蛋白质实验的命令参数 |
