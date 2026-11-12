@@ -1,0 +1,21 @@
+{
+  "expected_topology_sha256": "b041305456c6990bd39f779e62ef4d76c7a4e35c4b456177b6b1e58beec0aca5",
+  "expected_graphs": 188,
+  "width": 14,
+  "dtypes": ["float32", "float64"],
+  "routes": ["powers", "mixed", "powers_2d"],
+  "atol": 1e-8,
+  "rtol": 1e-6,
+  "tolerance_factors": [0.1, 1, 10],
+  "unit_controls": [[1, true], [0.00390625, true], [256, true], [0.00390625, false], [256, false]],
+  "precision_bits": [128, 256, 512],
+  "relabels": 3,
+  "seed": 0,
+  "chunk_size": 128,
+  "mis_search_nodes": 200000,
+  "seconds_per_graph": 3600,
+  "boundary_seconds_per_graph": 300,
+  "max_boundary_pairs_per_graph": 128,
+  "boundary_epsilon_multiplier": 32,
+  "memory_gib": 4
+}

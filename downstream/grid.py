@@ -103,7 +103,7 @@ def find_gnnplus_run(job_root: Path, seed: int, split: int) -> Path:
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--engine', choices=('grit', 'gnnplus'), required=True)
+    parser.add_argument('--engine', choices=('gnnplus',), required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--dataset', required=True)
     parser.add_argument('--metric', required=True)

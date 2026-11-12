@@ -1,4 +1,9 @@
 """BREC encoding comparison, numerical audits, costs, and optional exact grouping."""
+try:
+    from .determinism import prepare_environment, start_brec
+except ImportError:
+    from brec_determinism import prepare_environment, start_brec
+prepare_environment()
 import argparse
 from collections import defaultdict
 import hashlib
@@ -96,6 +101,7 @@ def main():
     p.add_argument("--fwl-max-work",type=int,default=2000000)
     p.add_argument("--fwl-max-rounds",type=int,default=100)
     args = p.parse_args()
+    determinism = start_brec(args.seed)
     if args.joint_scale_audit and (not args.max_budget_slices or 4 not in args.q_values or 'mean' not in args.readouts):
         p.error("--joint-scale-audit requires --max-budget-slices, Q=4 and mean readout")
     if args.max_budget_slices and (args.budget_ladder or args.resume_run or args.stage_limit):
@@ -183,6 +189,7 @@ def main():
         'brec_theory.py': 'theory.py',
         'brec_budget_cache.py': 'budget_cache.py',
         'brec_validation.py': 'validation.py',
+        'brec_determinism.py': 'determinism.py',
     }
     manifest = dict(configuration={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
                     dataset_sha256=data_hash,
@@ -190,6 +197,7 @@ def main():
                                                           else source_map[name]))
                              for name in source_map},
                     python=platform.python_version(),numpy=np.__version__,networkx=nx.__version__,
+                    determinism=determinism,
                     groups_sha256=checksum(args.groups) if args.groups else None,
                     status="running",
                     evaluation_scope=("smoke" if args.smoke else
@@ -427,7 +435,7 @@ def main():
                                     else:
                                         compare(current,refs[2],0)
                                     del current
-                                rng=np.random.default_rng(args.seed+pid)
+                                rng=np.random.Generator(np.random.PCG64(args.seed+pid))
                                 for _ in range(args.permutation_checks):
                                     perm=rng.permutation(len(main[0]))
                                     current=make_signature(main[0][np.ix_(perm,perm)])

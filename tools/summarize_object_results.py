@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 
 
-def compact(value):
+def compact(value, include_graph_ids=False):
     if isinstance(value, dict):
-        return {k: compact(v) for k, v in value.items()
-                if k not in {'evaluated_graphs', 'timings'}}
+        return {k: compact(v, include_graph_ids) for k, v in value.items()
+                if k not in {'evaluated_graphs', 'timings'}
+                and (include_graph_ids or not k.endswith('graph_ids'))}
     if isinstance(value, list):
-        return [compact(v) for v in value]
+        return [compact(v, include_graph_ids) for v in value]
     return value
 
 
@@ -20,6 +21,8 @@ def main():
     parser.add_argument('source', type=Path, help='Run directory or results_<tag>.json')
     parser.add_argument('--tag', default='rerun')
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--include-graph-ids', action='store_true',
+                        help='retain per-condition eligible graph-ID arrays')
     args = parser.parse_args()
     source = args.source / f'results_{args.tag}.json' if args.source.is_dir() else args.source
     if source.resolve() == args.out.resolve():
@@ -31,8 +34,9 @@ def main():
         raise ValueError('No aggregate rows/summary found; use results_<tag>.json')
     if 'paired_comparisons' not in data:
         raise ValueError('Input lacks paired_comparisons; do not infer paired CIs from route means')
-    result = compact({k: v for k, v in data.items() if k not in {'rows', 'summary', 'timings', 'run'}})
-    result['summary'] = rows
+    result = compact({k: v for k, v in data.items() if k not in {'rows', 'summary', 'timings', 'run'}},
+                     args.include_graph_ids)
+    result['summary'] = compact(rows, args.include_graph_ids)
     result['source'] = str(source)
     digest = hashlib.sha256()
     with source.open('rb') as handle:

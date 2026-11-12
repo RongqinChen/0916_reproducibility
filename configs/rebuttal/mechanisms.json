@@ -1,0 +1,8 @@
+{
+  "bases": ["monomial", "chebyshev"],
+  "moment_budgets": [1, 2, 3, 4],
+  "relabels": 8,
+  "seed": 20261112,
+  "seconds": 3600,
+  "memory_gib": 4
+}

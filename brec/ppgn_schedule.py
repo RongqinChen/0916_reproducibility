@@ -1,4 +1,6 @@
 """Dynamic GPU queue for pair/order jobs, plus a separate CPU multiset queue."""
+from .determinism import prepare_environment, start_brec, child_environment
+prepare_environment()
 import argparse
 import json
 import math
@@ -73,10 +75,7 @@ def command(job,args,phase):
     cmd=[sys.executable,'-m','brec.ppgn_realization','--brec-file',str(args.brec_file),
          '--pair-ids',str(job['pair_id']),'--orders',str(job['order']),
          '--seeds',*map(str,args.seeds),'--q',str(args.q),'--width',str(args.width),
-         '--layers',str(args.layers),'--physical-batch',str(batch),'--auto-batch',
-         # float32 first; bfloat16 only when float32 fits no batch at all.
-         '--allow-bf16-fallback',
-         '--checkpoint-fallback',
+         '--layers',str(args.layers),'--physical-batch',str(batch),
          '--epochs',str(args.epochs),'--lr',str(args.lr),'--weight-decay',str(args.weight_decay),
          '--early-stop-loss',str(args.early_stop_loss),'--threshold',str(args.threshold),
          '--chunk-size',str(args.chunk_size),'--decimals',str(args.decimals),
@@ -134,7 +133,7 @@ def main():
     p.add_argument('--pair-batch',type=int,choices=[2,4,8,16,32])
     p.add_argument('--triple-batch',type=int,choices=[2,4,8,16,32])
     p.add_argument('--cpu-workers',type=int,default=1,help='Concurrent CPU multiset jobs; independent of GPU slots')
-    p.add_argument('--threads',type=int,default=4,help='CPU threads per worker')
+    p.add_argument('--threads',type=int,default=1,help='BREC policy requires one CPU thread per worker')
     p.add_argument('--epochs',type=int,default=20)
     p.add_argument('--lr',type=float,default=1e-4)
     p.add_argument('--weight-decay',type=float,default=1e-5)
@@ -145,6 +144,9 @@ def main():
     p.add_argument('--max-state-elements',type=int,default=1_200_000_000)
     p.add_argument('--resume',action='store_true')
     args=p.parse_args()
+    start_brec(args.seeds[0], use_torch=True)
+    if args.threads != 1:
+        p.error('BREC deterministic runs require --threads 1')
     args.brec_file=args.brec_file.resolve(); args.out_dir=args.out_dir.resolve()
     args.pair_batch=args.pair_batch or args.physical_batch
     args.triple_batch=args.triple_batch or args.physical_batch
@@ -158,13 +160,15 @@ def main():
             or args.lr<=0 or args.weight_decay<0 or args.early_stop_loss<0 or args.threshold<=0):
         p.error('Invalid training parameters')
     args.torch_version=str(torch.__version__)
+    args.gpu_hardware={}
     # Each child gets exactly one physical device; prevent inherited remapping.
     for gpu in args.gpus:
-        env=dict(os.environ,CUDA_VISIBLE_DEVICES=gpu)
+        env=dict(child_environment(),CUDA_VISIBLE_DEVICES=gpu)
         check=subprocess.run([sys.executable,'-c',
             'import torch; assert torch.cuda.is_available() and torch.cuda.device_count()==1, "GPU unavailable"; print(torch.cuda.get_device_name(0))'],
             env=env,capture_output=True,text=True)
         if check.returncode:p.error(f'Cannot use GPU {gpu}: {check.stderr}')
+        args.gpu_hardware[str(gpu)]=check.stdout.strip()
         print('GPU',gpu,check.stdout.strip(),flush=True)
     extra=list((REPO/'brec').glob('*.py'))
     identity=begin_run(args,'ppgn_dynamic_gpu_v1_fp32',extra)
@@ -186,7 +190,8 @@ def main():
                                     reason='theoretically inseparable'))
                 continue
             name=f'pair-{pid:03d}_order-{order}'
-            job=dict(id=name,pair_id=pid,order=order,n=n,output=str(args.out_dir/'jobs'/name))
+            job=dict(id=name,pair_id=pid,order=order,n=n,output=str(args.out_dir/'jobs'/name),
+                     assigned_gpu=args.gpus[(2 * pid + order - 2) % len(args.gpus)])
             if training_done(job,args,verify=True):
                 job['gpu_status']='complete'
             elif guard_blocked(job,args):
@@ -209,7 +214,7 @@ def main():
         log_dir=args.out_dir/'logs';log_dir.mkdir(exist_ok=True)
         log=log_dir/f"{job['id']}.{phase}.{time.time_ns()}.log"
         handle=log.open('w')
-        env=dict(os.environ,CUDA_VISIBLE_DEVICES=gpu if gpu is not None else '',
+        env=dict(child_environment(),CUDA_VISIBLE_DEVICES=gpu if gpu is not None else '',
                  OMP_NUM_THREADS=str(args.threads),MKL_NUM_THREADS=str(args.threads),
                  OPENBLAS_NUM_THREADS=str(args.threads),PYTHONUNBUFFERED='1',
                  # Reduce allocator fragmentation on the memory-tight fallback jobs.
@@ -248,9 +253,9 @@ def main():
             busy={a['gpu'] for a in active if a['phase']=='gpu'}
             for gpu in args.gpus:
                 if gpu in busy:continue
-                pending=[j for j in jobs if j['gpu_status']=='pending']
-                if not pending:break
-                job=max(pending,key=lambda j:predict(j,calibration))
+                pending=[j for j in jobs if j['gpu_status']=='pending' and j['assigned_gpu']==gpu]
+                if not pending:continue
+                job=min(pending,key=lambda j:(-j['n']**(j['order']+1),j['id']))
                 launch(job,'gpu',gpu);changed=True
             while sum(a['phase']=='cpu' for a in active)<args.cpu_workers:
                 pending=[j for j in jobs if j['cpu_status']=='pending' and j['gpu_status'] in ('complete','failed')]

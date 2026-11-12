@@ -13,7 +13,7 @@
   "layers": 2,
   "physical_batch": 32,
   "cpu_workers": 1,
-  "threads": 4,
+  "threads": 1,
   "epochs": 20,
   "lr": 0.0001,
   "weight_decay": 1e-05,

@@ -5,6 +5,11 @@ reliability blocks, each containing 32 alternating left/right relabelings.
 No legacy project imports. Numerical signatures are rounded, not exact proofs.
 """
 from __future__ import annotations
+try:
+    from .determinism import prepare_environment, start_brec
+except ImportError:
+    from brec_determinism import prepare_environment, start_brec
+prepare_environment()
 import argparse
 import hashlib
 import json
@@ -81,6 +86,7 @@ def main():
     parser.add_argument("--decimals", nargs="+", type=int, default=[8])
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    determinism = start_brec(0)
     if args.out.exists():
         parser.error("Output exists; choose a new path")
     if min(args.q_values + args.p_values) < 1 or any(not 0 <= i < 400 for i in args.pair_ids):
@@ -130,6 +136,7 @@ def main():
         for block in iter(lambda: handle.read(1024*1024), b""):
             digest.update(block)
     payload = dict(experiment="brec_pair_encoding_screen", records=records,
+                   determinism=determinism,
                    configuration={k: str(v) if isinstance(v, Path) else v
                                   for k, v in vars(args).items()},
                    dataset_sha256=digest.hexdigest(),

@@ -1,10 +1,9 @@
 """PPGN pair/triple backbone following the CSDGSE BREC reference implementation.
 
-Reference (kept in sync by hand, see README section 2):
-    /home/chenrq/CSDGSE/run_brec.py
-    /home/chenrq/CSDGSE/configs/brec.ppgn.poly.yaml
-    /home/chenrq/CSDGSE/models/network/ppgn_brec.py
-    /home/chenrq/CSDGSE/models/layer/ppgn_layers.py
+Reference components: CSDGSE run_brec.py, configs/brec.ppgn.poly.yaml,
+models/network/ppgn_brec.py, and models/layer/ppgn_layers.py.
+This package contains the required implementation; no external CSDGSE
+checkout is imported. See docs/protocols.md for the executed configuration.
 
 Components, matched to the reference:
 
@@ -24,11 +23,14 @@ Components, matched to the reference:
 The realisation runner's resource ladder (physical batch 32 -> 16 -> 8 -> 4)
 and its input caches are deliberately independent of this architecture.
 """
+from .determinism import prepare_environment, configure_torch, assert_torch_determinism
+prepare_environment()
 from collections import OrderedDict
 import hashlib
 import numpy as np
 import torch
 from torch import nn
+configure_torch()
 
 from .budget_sweep import polynomial_bank
 
@@ -260,6 +262,7 @@ class RealizationPPGN(nn.Module):
     def __init__(self, order, q=8, width=32, layers=5, output_dim=16, mlp_depth=1,
                  grad_checkpoint=False):
         super().__init__()
+        assert_torch_determinism(torch)
         self.order = order
         # Recompute block activations in backward; only used by the memory
         # fallback for pairs whose float32 ladder cannot fit.
@@ -280,6 +283,7 @@ class RealizationPPGN(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def forward(self, x):
+        assert_torch_determinism(torch)
         node_h = None
         for index, block in enumerate(self.blocks):
             if self.grad_checkpoint and self.training:

@@ -1,4 +1,7 @@
 """Train models, then directly compare A/B input multisets for every pair."""
+from .determinism import (prepare_environment, start_brec, assert_torch_determinism,
+                          is_determinism_error)
+prepare_environment()
 import argparse
 from collections import Counter
 import gc
@@ -34,7 +37,7 @@ def resolve_baselines(records, raw, args):
         tick=time.perf_counter()
         try:
             # The baseline is the direct A/B multiset of the model's own input
-            # rows (CSDGSE rrwp powers), so both sides see the same kernel.
+            # rows (symmetric-normalized monomial powers).
             encoder=FixedInput(args.q,args.chunk_size,cache_bytes=args.input_cache_gb*1024**3)
             multisets=[]
             for index in (pid*64,pid*64+1):
@@ -45,9 +48,11 @@ def resolve_baselines(records, raw, args):
                     for row in rows))
             separated=multisets[0]!=multisets[1]
             base=dict(outcome='separated' if separated else 'not_separated',
-                      pair_id=pid,order=order,q=args.q,basis='rrwp',variant='polynomial',
+                      pair_id=pid,order=order,q=args.q,basis='monomial',variant='polynomial',
+                      kernel='symmetric-normalized',readout='raw-float32-multiset',
                       channels=input_channels(order,args.q),
-                      decimals=args.decimals,dtype='float32',evaluation_mode='direct',
+                      decimals=None,requested_decimals_metadata=args.decimals,
+                      dtype='float32',evaluation_mode='direct',
                       invariance_checks_performed=False,signature_graph_count=2,
                       source=str(path.resolve()),seconds=time.perf_counter()-tick)
         except (RuntimeError,FloatingPointError,MemoryError) as error:
@@ -72,6 +77,7 @@ def rpc_score(values):
     Float32 covariance pinv uses an explicit cutoff. A centered-data SVD
     independently recomputes the same retained-subspace statistic.
     """
+    assert_torch_determinism(torch)
     x=torch.as_tensor(values,dtype=torch.float32,device='cpu')
     if x.ndim!=2 or len(x)!=64 or not torch.isfinite(x).all():
         raise ValueError('RPC requires 64 finite embeddings')
@@ -96,13 +102,16 @@ def rpc_score(values):
 
 @torch.no_grad()
 def embed(model,graphs,inputs,args):
+    assert_torch_determinism(torch)
     model.eval(); results=[]
     for start in range(0,len(graphs),args.physical_batch):
         y=model(inputs.batch(graphs[start:start+args.physical_batch],model.order,args.device,
                              work_dtype(args)))
         if not torch.isfinite(y).all():
             raise FloatingPointError('Nonfinite model output')
-        results.append(y.cpu())
+        # NumPy serialization and RPC use float32, including a bf16 fallback.
+        # This cast is a no-op for the archived all-float32 campaign.
+        results.append(y.float().cpu())
     return torch.cat(results).numpy()
 
 
@@ -119,6 +128,7 @@ def evaluate(main,reliability,threshold,order,pid):
 
 
 def train(model,graphs,inputs,args):
+    assert_torch_determinism(torch)
     model.train()
     opt=torch.optim.Adam(model.parameters(),lr=args.lr,weight_decay=args.weight_decay)
     scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(opt)
@@ -189,6 +199,7 @@ def fit_condition(graphs, reliability, inputs, order, seed, pid, n, args, stem):
                 # uninitialized device. Initialize and select the device first.
                 torch.cuda.init(); torch.cuda.set_device(torch.device(args.device))
                 torch.cuda.manual_seed_all(seed); torch.cuda.reset_peak_memory_stats(args.device)
+                attempt['gpu_name']=torch.cuda.get_device_name(args.device)
             model=RealizationPPGN(order,args.q,args.width,args.layers).to(args.device,
                                                                          dtype=work_dtype(local))
             model.grad_checkpoint=checkpoint
@@ -206,6 +217,8 @@ def fit_condition(graphs, reliability, inputs, order, seed, pid, n, args, stem):
                         artifact_sha256={f.name:checksum(f) for f in (output,checkpoint)})
             attempt['status']='complete'
         except (RuntimeError,FloatingPointError,MemoryError) as error:
+            if is_determinism_error(error):
+                raise
             oom=isinstance(error, (torch.cuda.OutOfMemoryError,MemoryError)) or 'out of memory' in str(error).lower()
             attempt.update(status='resource_error' if oom else 'execution_error',error=str(error))
             answer=dict(status=attempt['status'],error=str(error),dtype=dtype,
@@ -311,6 +324,11 @@ def main():
     p.add_argument('--out-dir',type=Path,required=True)
     p.add_argument('--resume',action='store_true')
     args=p.parse_args()
+    start_brec(args.seeds[0], use_torch=True)
+    if args.threads != 1:
+        p.error('BREC deterministic runs require --threads 1')
+    if args.auto_batch or args.allow_bf16_fallback or args.checkpoint_fallback:
+        p.error('Freeze physical batch, dtype and checkpoint mode before running; adaptive fallbacks are disabled for BREC reproducibility')
     args.pair_ids=list(range(400)) if args.all_pairs else read_pair_ids(args.pair_list) if args.pair_list else args.pair_ids
     validate_pair_ids(args.pair_ids)
     if min(args.width,args.layers,args.epochs,args.threads,args.chunk_size,args.max_state_elements)<1:
@@ -329,14 +347,14 @@ def main():
     torch.backends.cudnn.benchmark=False
     torch.backends.cudnn.deterministic=True
     args.torch_version=str(torch.__version__)
-    args.input_protocol='symmetric-float32-chebyshev-polynomial-six-lifts'
+    args.input_protocol='symmetric-float32-monomial-three-plane-lifts'
     args.scorer_protocol='float32-covariance-pinv-with-matched-SVD-cutoff-v1'
     extra=[Path(__file__),*(Path(__file__).parent/name for name in
            ('ppgn_models.py','budget_sweep.py','encodings.py','theory.py','validation.py'))]
     # The execution phase does not change trained artifacts.
     training_args=argparse.Namespace(**{k:v for k,v in vars(args).items()
                                       if k not in ('train_only','baseline_only')})
-    identity=begin_run(training_args,'ppgn_realization_v4_adaptive_batch',extra)
+    identity=begin_run(training_args,'ppgn_realization_v5_deterministic_fixed_batch',extra)
     raw=load_brec(args.brec_file,args.trust_pickle)
     records=[]
     for pid in args.pair_ids:

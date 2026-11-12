@@ -53,7 +53,7 @@ def protocol_identity(manifest):
     config={k:v for k,v in manifest['configuration'].items()
             if k not in ('out_dir','resume_run','stage_limit')}
     return dict(configuration=config,**{k:manifest.get(k) for k in
-                ('dataset_sha256','sources','python','numpy','networkx','groups_sha256','theory_policy')})
+                ('dataset_sha256','sources','python','numpy','networkx','groups_sha256','theory_policy','determinism')})
 
 
 def validate_run(directory, allow_partial=False, allow_errors=False):

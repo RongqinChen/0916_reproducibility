@@ -41,10 +41,13 @@ def atomic_json(path, value):
 def begin_run(args, protocol, extra_sources=()):
     """Bind resume to the exact arguments, dataset, source and environment."""
     package = Path(__file__).resolve().parent
-    sources = (list(package.glob('*.py'))
+    from brec.determinism import runtime_identity
+    runtime_source = package.parent / 'brec' / 'determinism.py'
+    sources = (list(package.glob('*.py')) + [runtime_source]
                + [Path(p).resolve() for p in extra_sources])
     identity = {
         'protocol': protocol,
+        'determinism': runtime_identity(use_torch=protocol.startswith('ppgn')),
         'configuration': {k: str(v) if isinstance(v, Path) else v
                           for k, v in vars(args).items()
                           if k not in ('out_dir', 'resume')},

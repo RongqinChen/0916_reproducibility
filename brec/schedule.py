@@ -1,4 +1,9 @@
 """Frozen, resumable, memory-aware single-machine BREC execution (POSIX)."""
+try:
+    from .determinism import prepare_environment, start_brec, child_environment
+except ImportError:
+    from brec_determinism import prepare_environment, start_brec, child_environment
+prepare_environment()
 import argparse
 import fcntl
 import hashlib
@@ -22,7 +27,7 @@ except ImportError:
 GIB = 1024**3
 FILES = ('brec_experiments.py', 'brec_encodings.py', 'budget_sweep.py',
          'brec_theory.py', 'brec_report.py', 'brec_schedule.py', 'brec_budget_cache.py',
-         'brec_validation.py')
+         'brec_validation.py', 'brec_determinism.py')
 SOURCE_FILES = {
     'brec_experiments.py': 'experiments.py',
     'brec_encodings.py': 'encodings.py',
@@ -32,6 +37,7 @@ SOURCE_FILES = {
     'brec_schedule.py': 'schedule.py',
     'brec_budget_cache.py': 'budget_cache.py',
     'brec_validation.py': 'validation.py',
+    'brec_determinism.py': 'determinism.py',
 }
 
 
@@ -288,7 +294,7 @@ def check_job(job, directory, spec, partial=False):
     if manifest['dataset_sha256']!=spec['dataset_sha256']:
         raise ValueError('Job dataset identity mismatch')
     required=('brec_experiments.py','brec_encodings.py','budget_sweep.py',
-              'brec_theory.py','brec_budget_cache.py','brec_validation.py')
+              'brec_theory.py','brec_budget_cache.py','brec_validation.py','brec_determinism.py')
     if manifest['sources']!={name:spec['sources'][name] for name in required}:
         raise ValueError('Job source identity mismatch')
     wanted=job['configuration']
@@ -355,7 +361,7 @@ def run(args):
     pending=[j for j in spec['jobs'] if state.get(j['id'],{}).get('status')!='complete']
     pending.sort(key=lambda j:j['work'],reverse=True)
     waiting={j['id']:time.monotonic() for j in pending}
-    env=os.environ.copy()
+    env=child_environment()
     for key in ('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS',
                 'VECLIB_MAXIMUM_THREADS','NUMEXPR_NUM_THREADS','BLIS_NUM_THREADS'):
         env[key]='1'
@@ -594,6 +600,7 @@ def main():
     p=sub.add_parser('status')
     p.add_argument('--root',type=Path,required=True)
     args=parser.parse_args()
+    start_brec(0)
     if args.action=='run' and (args.slots<1 or args.memory_gib<=0 or args.reserve_gib<0
                               or args.memory_factor<=0 or args.max_jobs<0 or args.drain_seconds<0
                               or args.disk_reserve_gib<0 or args.poll_seconds<=0

@@ -6,6 +6,8 @@ in accumulation. Includes actual computation on specified negative IDs; never
 uses the active runner's theoretical skips. This remains a float32 diagnostic.
 """
 from __future__ import annotations
+from .determinism import prepare_environment, start_brec
+prepare_environment()
 
 import argparse
 import json
@@ -130,6 +132,7 @@ def main():
     p.add_argument('--out-dir', type=Path, required=True)
     p.add_argument('--resume', action='store_true')
     args = p.parse_args()
+    start_brec(0)
     args.pair_ids = (args.pair_ids if args.pair_ids is not None
                      else read_pair_ids(args.pair_list))
     validate_pair_ids(args.pair_ids)

@@ -31,6 +31,10 @@ def launch(args, command, threads=1):
     if args.dry_run:
         return
     env = dict(os.environ)
+    if args.action.startswith('brec-') or args.action == 'ppgn':
+        from brec.determinism import child_environment
+        env = child_environment(env)
+        threads = 1
     for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
                 'NUMEXPR_NUM_THREADS'):
         env[key] = str(threads)
@@ -72,9 +76,11 @@ def main():
             p.add_argument('--gpus', nargs='+', default=['0', '1'])
             p.add_argument('--physical-batch', type=int, choices=[2, 4, 8, 16, 32], default=32)
             p.add_argument('--cpu-workers', type=int, default=1)
-            p.add_argument('--threads', type=int, default=4)
+            p.add_argument('--threads', type=int, default=1)
             p.add_argument('--resume', action='store_true')
     args = parser.parse_args()
+    if args.action == 'ppgn' and args.threads != 1:
+        parser.error('BREC deterministic runs require --threads 1')
     for name in ('topology', 'data_root', 'out', 'root', 'brec_file', 'scratch_root'):
         if getattr(args, name, None) is not None:
             setattr(args, name, getattr(args, name).resolve())
