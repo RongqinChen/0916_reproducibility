@@ -1,6 +1,6 @@
 # Graph Structural Encodings: Operations, Budgets, and Readouts
 
-实验代码与 rebuttal 补充实验。BREC／机制以Python 3.12、Linux为目标环境；TU使用Co-Sparsify原环境，所有命令从本目录运行。仓库不包含旧实验结果；数据路径和输出目录由运行者指定。
+实验代码与 rebuttal 补充实验。BREC／机制以Python 3.12、Linux为目标环境；TU使用Co-Sparsify的loader／Lightning训练与评估流程，并将骨干模型替换为`gnnplus_official`的GNNPlus GINE。所有命令从本目录运行；数据路径和输出目录由运行者指定。
 
 ## 运行补充实验
 
@@ -14,7 +14,9 @@ CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-both
 ```
 
 运行前按说明设置 `BREC_FILE`、`TU_DATA_ROOT` 等路径。各实验进度见补充实验说明。
-`protein-both`直接运行未修改的Co-Sparsify TU入口，只有编码不同。PROTEINS_full与ENZYMES，各9编码×4宽度(8/12/14/16)×10折，总计720次原生训练；同一留出折选checkpoint并评分，报告原始均值与总体标准差。使用原SPPGN1、loader和训练器，结果保存在outputs/rebuttal/cosparsify_tu。环境、固定commit及分批运行见说明。
+`protein-both`使用Co-Sparsify的TU数据、十折任务和训练器，并将模型替换为GNNPlus官方GINE层、SAN图头和mean pooling；编码通过节点loop通道与有向边pair通道注入。PROTEINS_full与ENZYMES各9编码×4宽度×10折，总计720次训练；同一留出折选checkpoint并评分。结果保存在outputs/rebuttal/cosparsify_tu。
+
+完整矩阵可用`python tools/run_protein_grid.py`在后台分片运行；先加`--dry-run`检查任务计划。运行器支持4 GPU调度、内存余量、断点续跑、跨shard身份与checksum校验，以及最终合并报告。
 
 ## 阅读代码
 
@@ -27,6 +29,7 @@ CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-both
 | `encodings.py`、`intervals.py`、`readouts.py` | 编码公式、区间算术和判别规则 |
 | `protein.py` | 原Co-Sparsify入口调用、完成项复用和只读结果捕获 |
 | `protein_encodings.py` | 只替换原poly变换；相同宽度的9种编码 |
+| `protein_gnnplus.py` | GNNPlus官方GINE／SAN头的输入适配与模型构造 |
 | `protein_report.py` | 原始10折分数与同宽度配对差汇总 |
 | `common.py` | 文件读写、运行配置和资源限制 |
 

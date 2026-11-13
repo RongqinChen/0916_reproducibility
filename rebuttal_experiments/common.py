@@ -93,10 +93,11 @@ def resume_identity(identity):
         # Protein-only edits do not change a completed BREC condition.
         bookkeeping.update(name for name in identity['sources']
                            if name.startswith('protein') or name == 'tu_data.py')
-    if identity['configuration'].get('protocol') == 'cosparsify-tu-encoding-only-v1':
+    if identity['configuration'].get('protocol') == 'gnnplus-gine-tu-structural-edge-v1':
         # Native TU numerics depend on the pinned upstream tree and these adapters.
         bookkeeping.update(name for name in identity['sources']
-                           if name not in {'__init__.py', 'protein.py', 'protein_encodings.py'})
+                           if name not in {'__init__.py', 'protein.py', 'protein_encodings.py',
+                                           'protein_gnnplus.py'})
     environment = identity['environment']
     return {**identity,
             'sources': {name: digest for name, digest in identity['sources'].items()

@@ -1,14 +1,16 @@
-"""Run the unmodified Co-Sparsify TU pipeline, replacing only its poly transform."""
+"""Run the Co-Sparsify TU pipeline with structural encodings and GNNPlus GINE."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 from pathlib import Path
 import runpy
 import subprocess
 import sys
+import types
 
 from .common import atomic_json, atomic_npz, configuration, run_directory, sha256
 from .protein_encodings import ENCODINGS, make_transform
@@ -20,11 +22,75 @@ def reference_state(root, config):
     commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
     if commit != config['reference_commit']:
         raise ValueError('Co-Sparsify checkout differs from the pinned reference commit')
-    dirty = subprocess.check_output(['git', '-C', str(root), 'diff', '--name-only', 'HEAD', '--', '*.py', '*.yaml'], text=True)
+    dirty = subprocess.check_output(
+        ['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all',
+         '--', '*.py', '*.yaml'],
+        text=True,
+    )
     if dirty.strip():
         raise ValueError('Use an unmodified Co-Sparsify checkout; changes belong only in the encoding adapter')
     sources = [*root.rglob('*.py'), *root.rglob('*.yaml')]
     return {'commit': commit, 'sources': {str(path.relative_to(root)): sha256(path) for path in sorted(sources)}}
+
+
+def load_transform_registry(reference, include_2fwl=True):
+    """Expose the two upstream transforms used by the TU configuration.
+
+    The pinned upstream package eagerly imports unrelated Sage/connectivity
+    transforms, some of whose source files are absent from the pinned commit.
+    Load the original Polynomials and K2FWLConnSpTransform directly.
+    """
+    def load(name):
+        source = reference / f'transforms/{name}.py'
+        spec = importlib.util.spec_from_file_location(f'_cosparsify_{name}', source)
+        if spec is None or spec.loader is None:
+            raise ImportError(f'Cannot load upstream transform: {source}')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    polynomial = load('compute_polynomial')
+    registry = types.ModuleType('transforms')
+    registry.__file__ = str(reference / 'transforms/__init__.py')
+    registry.__path__ = [str(reference / 'transforms')]
+    registry.__package__ = 'transforms'
+    registry.transform_dict = {
+        'poly': polynomial.Polynomials,
+    }
+    if include_2fwl:
+        registry.transform_dict['2fwl_connsp'] = load(
+            'compute_2fwl_connsp').K2FWLConnSpTransform
+    sys.modules['transforms'] = registry
+    return registry
+
+
+def load_model_registry(reference):
+    """Register only the native SPPGN1 network selected by the TU config."""
+    importlib.invalidate_caches()
+    import models
+
+    package = types.ModuleType('models.network')
+    package.__file__ = str(reference / 'models/network/__init__.py')
+    package.__path__ = [str(reference / 'models/network')]
+    package.__package__ = 'models.network'
+    sys.modules['models.network'] = package
+    models.network = package
+
+    name = 'models.network.sppgn1'
+    source = reference / 'models/network/sppgn1.py'
+    spec = importlib.util.spec_from_file_location(name, source)
+    if spec is None or spec.loader is None:
+        raise ImportError(f'Cannot load upstream SPPGN1 model: {source}')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    package.sppgn1 = module
+    package.network_dict = {'sppgn1': module.SPPGN1}
+    return package
 
 
 def run(args):
@@ -36,13 +102,28 @@ def run(args):
     encodings = args.encodings or config['encodings']
     widths = args.poly_dims or config['poly_dims']
     folds = args.folds if args.folds is not None else config['folds']
+    batch_size_override = config.get('batch_size_override')
+    if batch_size_override is not None and (
+            not isinstance(batch_size_override, int) or batch_size_override <= 0):
+        raise ValueError('batch_size_override must be a positive integer')
+    model_backend = config.get('model_backend', 'cosparsify_sppgn1')
+    if model_backend not in ('cosparsify_sppgn1', 'gnnplus_gine'):
+        raise ValueError('Unsupported model_backend')
     for selected, allowed in ((encodings, config['encodings']), (widths, config['poly_dims']), (folds, config['folds'])):
         if len(selected) != len(set(selected)) or not set(selected) <= set(allowed):
             raise ValueError('Invalid TU job selection')
     upstream = reference_state(reference, config)
     frozen = {**config, 'dataset': args.dataset, 'data_root': str(args.data_root.resolve()),
               'reference_root': str(reference), 'upstream': upstream}
-    with run_directory(args.out, frozen, [args.config, reference / config['reference_config']], args.resume) as (out, identity):
+    inputs = [args.config, reference / config['reference_config']]
+    if model_backend == 'gnnplus_gine':
+        gnnplus_root = Path(__file__).resolve().parents[1] / 'gnnplus_official/GNNPlus'
+        inputs.extend([
+            gnnplus_root / '__init__.py',
+            gnnplus_root / 'layer/gine_conv_layer.py',
+            gnnplus_root / 'head/san_graph.py',
+        ])
+    with run_directory(args.out, frozen, inputs, args.resume) as (out, identity):
         for encoding in encodings:
             for width in widths:
                 pending = [fold for fold in folds
@@ -73,7 +154,16 @@ def native(args):
     reference = args.reference_root.resolve()
     sys.path.insert(0, str(reference))
     import comet_ml  # noqa: F401 -- upstream requires this before torch/sklearn.
-    import transforms
+    model_backend = config.get('model_backend', 'cosparsify_sppgn1')
+    transforms = load_transform_registry(
+        reference, include_2fwl=model_backend == 'cosparsify_sppgn1')
+    if model_backend == 'gnnplus_gine':
+        from .protein_gnnplus import IdentityTransform, register_model
+        transforms.transform_dict['2fwl_connsp'] = (
+            lambda **kwargs: IdentityTransform(**kwargs))
+        register_model(config)
+    else:
+        load_model_registry(reference)
     upstream_poly = transforms.transform_dict['poly']
     transforms.transform_dict['poly'] = lambda **kwargs: make_transform(upstream_poly, **kwargs)
     import utils
@@ -83,9 +173,11 @@ def native(args):
     original_load = utils.load_cfg
     def load_cfg(native_args):
         cfg = original_load(native_args)
-        # Only filesystem/logging locations change; numeric settings stay upstream.
+        # Filesystem locations change; the configured physical batch override is explicit.
         cfg.dataset.path = str(args.data_root.resolve())
         cfg.train.save_dir = str(args.out.resolve() / 'native')
+        if config.get('batch_size_override') is not None:
+            cfg.train.batch_size = config['batch_size_override']
         return cfg
     utils.load_cfg = load_cfg
 
@@ -125,9 +217,12 @@ def native(args):
                    targets=torch.cat(model.step_results['test_target']).numpy())
         checkpoint = Path(trainer.checkpoint_callback.best_model_path).resolve()
         metrics = {key.removeprefix('final/'): float(values[-1]) for key, values in results.items()}
-        model_settings = {name: getattr(cfg.model, name) for name in (
-            'name', 'hidden_dim', 'num_layers', 'mlp_depth', 'pooling', 'drop_prob',
-            'jk_mode', 'norm_type', 'act_type', 'num_tasks', 'node_encoder', 'edge_encoder')}
+        if model_backend == 'gnnplus_gine':
+            model_settings = {'backend': model_backend, **config['gnnplus']}
+        else:
+            model_settings = {name: getattr(cfg.model, name) for name in (
+                'name', 'hidden_dim', 'num_layers', 'mlp_depth', 'pooling', 'drop_prob',
+                'jk_mode', 'norm_type', 'act_type', 'num_tasks', 'node_encoder', 'edge_encoder')}
         training = {name: getattr(cfg.train, name) for name in (
             'batch_size', 'lr', 'min_lr', 'weight_decay', 'num_warmup_epochs',
             'num_epochs', 'optimizer', 'scheduler', 'num_workers')}
@@ -175,7 +270,10 @@ def main(argv=None):
     p.add_argument('--resume', action='store_true')
     p.set_defaults(function=run)
     p = commands.add_parser('report')
-    p.add_argument('--out', type=Path, required=True, help='Completed dataset output directory')
+    p.add_argument('--out', type=Path, required=True,
+                   help='Report output directory; also the input root for an unsharded run')
+    p.add_argument('--shards', type=Path, nargs='+',
+                   help='Completed encoding/width shard roots to validate and merge')
     p.set_defaults(function=report)
     p = commands.add_parser('_native', help=argparse.SUPPRESS)
     for flag in ('config', 'dataset', 'encoding', 'identity'):

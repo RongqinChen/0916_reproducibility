@@ -1,8 +1,20 @@
 {
-  "protocol": "cosparsify-tu-encoding-only-v1",
+  "protocol": "gnnplus-gine-tu-structural-edge-v1",
   "reference_root": "Co-Sparsify",
   "reference_commit": "505f6b50f019dc78edc88653d771667c0c561f5f",
   "reference_config": "configs/sppgn/tud.sppgn1.poly.yaml",
+  "batch_size_override": 64,
+  "model_backend": "gnnplus_gine",
+  "gnnplus": {
+    "hidden_dim": 256,
+    "layers": 3,
+    "dropout": 0.0,
+    "residual": true,
+    "ffn": false,
+    "head_layers": 3,
+    "activation": "relu",
+    "pooling": "mean"
+  },
   "datasets": [
     "PROTEINS_full",
     "ENZYMES"
