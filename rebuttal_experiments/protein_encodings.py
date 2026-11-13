@@ -1,107 +1,83 @@
-"""Nine protein encoding recipes from one shared degree-two channel bank."""
+"""Encoding-only replacements for Co-Sparsify's native Polynomials transform."""
 from __future__ import annotations
 
-from itertools import product
-
-import numpy as np
-
-PROTOCOL = 'protein-encoding-grid-v1'
-WIDTH = 64
-POSITIONS = [(i, j) for i in range(3) for j in range(3) if i != j]
-ENCODINGS = {
-    'none': {'family': 'zero', 'q': 0, 'basis': 'none', 'channels': 0},
-    'polynomial_q1': {'family': 'polynomial', 'q': 1, 'basis': 'monomial', 'channels': 19},
-    'nonjoint_q1': {'family': 'degree-2 pair lifts plus h1', 'q': 2, 'basis': 'monomial', 'channels': 27},
-    'joint_q1': {'family': 'polynomial plus joint', 'q': 1, 'basis': 'monomial', 'channels': 27},
-    'joint_q1_shifted': {'family': 'polynomial plus joint', 'q': 1, 'basis': '(I,I+M)', 'channels': 27},
-    'polynomial_q2': {'family': 'polynomial', 'q': 2, 'basis': 'monomial', 'channels': 25},
-    'endpoint_q2': {'family': 'polynomial plus endpoint', 'q': 2, 'basis': 'monomial', 'channels': 37},
-    'joint_q2': {'family': 'polynomial plus endpoint plus joint', 'q': 2, 'basis': 'monomial', 'channels': 64},
-    'joint_q2_chebyshev': {'family': 'polynomial plus endpoint plus joint', 'q': 2, 'basis': '(I,M,2M^2-I)', 'channels': 64},
-}
-VARIANTS = tuple(ENCODINGS)
-COMPARISONS = (
-    ('polynomial_q1', 'none'),
-    ('nonjoint_q1', 'polynomial_q1'),
-    ('joint_q1', 'polynomial_q1'),
-    ('joint_q1', 'nonjoint_q1'),
-    ('joint_q1_shifted', 'joint_q1'),
-    ('polynomial_q2', 'polynomial_q1'),
-    ('endpoint_q2', 'polynomial_q2'),
-    ('joint_q2', 'endpoint_q2'),
-    ('joint_q2', 'joint_q1'),
-    ('joint_q2_chebyshev', 'joint_q2'),
-)
+ENCODINGS = ('rrwp', 'mono', 'cheb', 'none', 'base', 'endpoint', 'powers', 'joint', 'joint_mix')
+COMPARISONS = (('mono', 'rrwp'), ('cheb', 'mono'), ('base', 'none'),
+               ('endpoint', 'base'), ('powers', 'endpoint'), ('joint', 'endpoint'),
+               ('joint', 'powers'), ('joint', 'mono'), ('joint_mix', 'joint'))
 
 
-def validate_config(config):
-    if config.get('encoding_protocol') != PROTOCOL or config.get('structural_width') != WIDTH:
-        raise ValueError('Use the 64-slot protein encoding-grid configuration and a new output directory')
-    variants = config['variants']
-    if not variants or len(set(variants)) != len(variants) or set(variants) - set(VARIANTS):
-        raise ValueError('Invalid encoding list')
-    if (len(config['primary_comparison']) != 2 or len(set(config['primary_comparison'])) != 2
-            or not set(config['primary_comparison']) <= set(variants)):
-        raise ValueError('The primary comparison must be included in the encoding list')
+def layout(width):
+    base = width // 2
+    endpoint = (width - base) // 2
+    return base, endpoint, width - base - endpoint
 
 
-def channel_projection(variant):
-    """Map canonical [25 polynomial, 12 endpoint, 27 joint] rows to a recipe.
+def joint_pair_channels(poly, count):
+    """J_q(u,v)=A_uv sum_w A_uw A_vw sum_t Bq_ut Bq_vt Bq_wt.
 
-    Every recipe is retained in full and then zero-padded to 64 slots. Basis
-    changes are complete linear transforms, not selected channel prefixes.
+    This fixed readout uses a three-coordinate shared-pivot channel without
+    adding a trainable readout or changing the upstream pair-based backbone.
+    Only one common-neighbor plane is held at a time; no n^3 cache is stored.
     """
-    identity = np.eye(WIDTH)
-    q1_joint = [37 + 9*a + 3*b + c for a, b, c in product(range(2), repeat=3)]
-    if variant == 'none':
-        return identity[:0]
-    if variant == 'polynomial_q1':
-        return identity[:19]
-    if variant == 'nonjoint_q1':
-        return identity[list(range(25)) + [26, 25]]  # h1(u), h1(v)
-    if variant in ('joint_q1', 'joint_q1_shifted'):
-        base, joint = identity[:19].copy(), identity[q1_joint]
-        if variant == 'joint_q1_shifted':
-            base[13:19] += identity[1:7]
-            change = np.asarray([[1, 0], [1, 1]], dtype='float64')
-            joint = np.kron(np.kron(change, change), change) @ joint
-        return np.concatenate((base, joint), axis=0)
-    if variant == 'polynomial_q2':
-        return identity[:25]
-    if variant == 'endpoint_q2':
-        return identity[:37]
-    if variant == 'joint_q2':
-        return identity
-    if variant == 'joint_q2_chebyshev':
-        result = identity.copy()
-        result[19:25] = 2 * identity[19:25] - identity[1:7]
-        change = np.asarray([[1, 0, 0], [0, 1, 0], [-1, 0, 2]], dtype='float64')
-        result[37:] = np.kron(np.kron(change, change), change) @ identity[37:]
-        return result
-    raise ValueError(variant)
-
-
-def canonical_rows(base, joint, h1, coords):
-    """Reconstruct endpoint columns without storing their repeated values."""
-    rows = np.zeros((len(coords[0]), WIDTH), dtype='float64')
-    rows[:, :25] = base
-    if joint is not None:
-        rows[:, 37:] = joint
-    for position, (i, j) in enumerate(POSITIONS):
-        rows[:, 25 + 2*position] = h1[coords[j]]
-        rows[:, 26 + 2*position] = h1[coords[i]]
-    return rows
-
-
-def project_rows(rows, projection):
-    """Apply the sparse channel transform in float64 and pad to equal width."""
-    result = np.zeros((len(rows), WIDTH), dtype='float64')
-    if not len(projection):
-        return result
-    if np.count_nonzero(projection) == len(projection) and np.all(projection.max(1) == 1):
-        result[:, :len(projection)] = rows[:, projection.argmax(1)]
-        return result
-    for target, weights in enumerate(projection):
-        for source in np.flatnonzero(weights):
-            result[:, target] += weights[source] * rows[:, source]
+    import torch
+    adjacency = (poly[:, :, 1] > 0).to(poly.dtype)
+    result = poly.new_zeros((len(poly), len(poly), count))
+    for degree in range(1, count + 1):
+        matrix = poly[:, :, degree]
+        for u in range(len(poly)):
+            neighbors = adjacency[u].nonzero(as_tuple=False).flatten()
+            if not len(neighbors):
+                continue
+            rows = matrix[neighbors]
+            joint = (rows * matrix[u]) @ rows.T
+            triangle = adjacency[neighbors[:, None], neighbors[None, :]]
+            result[u, neighbors, degree - 1] = (joint * triangle).sum(1)
     return result
+
+
+def make_transform(upstream, poly_method, poly_dim, **kwargs):
+    """Keep the native transform, including metadata, for upstream baselines."""
+    if poly_method not in ENCODINGS:
+        raise ValueError(poly_method)
+    if poly_method in ('rrwp', 'mono', 'cheb'):
+        return upstream(poly_method=poly_method, poly_dim=poly_dim, **kwargs)
+
+    class EncodingTransform(upstream):
+        def __init__(self):
+            super().__init__(poly_method='mono', poly_dim=poly_dim, **kwargs)
+
+        def forward(self, data):
+            import math
+            import torch
+            data = super().forward(data)
+            poly = data['pair_x'].reshape(data.num_nodes, data.num_nodes, poly_dim)
+            values = torch.zeros_like(poly)
+            base, endpoints, extra = layout(poly_dim)
+            if poly_method != 'none':
+                values[:, :, :base] = poly[:, :, :base]
+            if poly_method in ('endpoint', 'powers', 'joint', 'joint_mix'):
+                h1, h2 = poly[:, :, 1].sum(1), poly[:, :, 2].sum(1)
+                channels = (h1[:, None], h1[None, :], h2[:, None], h2[None, :])
+                for column in range(endpoints):
+                    values[:, :, base + column] = channels[column]
+            if poly_method == 'powers':
+                values[:, :, base + endpoints:] = poly[:, :, 1:extra+1].square()
+            if poly_method in ('joint', 'joint_mix'):
+                values[:, :, base + endpoints:] = joint_pair_channels(poly, extra)
+            if poly_method == 'joint_mix':
+                indices = torch.arange(poly_dim, dtype=poly.dtype)
+                change = torch.cos(math.pi / poly_dim * indices[:, None] * (indices[None, :] + 0.5))
+                change[0] *= math.sqrt(1 / poly_dim)
+                change[1:] *= math.sqrt(2 / poly_dim)
+                values = values @ change.T
+            if not torch.isfinite(values).all():
+                raise FloatingPointError('Nonfinite structural encoding')
+            data['pair_x'] = values.flatten(0, 1)
+            data['loop_x'] = torch.diagonal(values).permute(1, 0)
+            return data
+
+        def __repr__(self):
+            return f'{poly_method}_{poly_dim}'
+
+    return EncodingTransform()

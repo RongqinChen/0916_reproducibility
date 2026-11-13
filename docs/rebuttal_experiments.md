@@ -1,24 +1,21 @@
 # Rebuttal 补充实验：服务器运行说明
 
-协议 `rebuttal-2026-11-12-v2`。代码按实验计算、运行流程和结果汇总组织；没有捆绑旧实验结果。`mechanisms`已在服务器完成：精确base／joint多重集比较及换基第三矩差1/331776与理论一致；完整BREC和蛋白质预测仍待执行。
+BREC／机制协议 `rebuttal-2026-11-12-v2`；TU使用 `cosparsify-tu-encoding-only-v1`。代码按实验计算、运行流程和结果汇总组织；没有捆绑旧实验结果。`mechanisms`已在服务器完成：精确base／joint多重集比较及换基第三矩差1/331776与理论一致；完整BREC和蛋白质预测仍待执行。
 
 ## 环境与输入
 
-在 Linux、Python 3.12 下，从本仓库根目录运行：
+BREC／精确机制实验在Linux、Python 3.12环境中，从本仓库根目录运行：
 
 ```bash
 python -m venv .venv-rebuttal
 source .venv-rebuttal/bin/activate
 python -m pip install -r requirements/rebuttal.txt
-# 蛋白质实验另需服务器对应的 PyTorch，再安装：
-python -m pip install -r requirements/rebuttal-protein.txt
 
 export REBUTTAL_OUT=outputs/rebuttal
 export BREC_FILE=/server/data/BREC/brec_v3.npy
-export TU_DATA_ROOT=/server/data/tu
 ```
 
-将输入路径换成真实位置。BREC 使用官方 51200 条 graph6 数组，SHA-256 固定在配置中。蛋白质接受本地 TU raw 文本或 ZIP；仅显式 `--download` 才下载数据。
+将输入路径换成真实位置。BREC 使用官方 51200 条 graph6 数组，SHA-256 固定在配置中。TU实验使用下文Co-Sparsify的原始环境和原始PyG loader，不在BREC环境中安装／运行；数据缺失时沿用原loader的下载行为。
 
 每项默认写入新目录，拒绝覆盖。`--resume` 核对数据、配置、核心计算代码和环境，并保留已完成记录；仅删除停用的补充模块或整理运行入口不要求重算。原记录身份不改写，当前源码清单另记在运行manifest中。
 
@@ -29,7 +26,7 @@ export TU_DATA_ROOT=/server/data/tu
 | 1. joint 与均值矩 | `mechanisms` | rook／Shrikhande 的原始区分与读出区分是否不同 |
 | 2. 换基与读出 | 同一个 `mechanisms` | Q=1、P=3 下，保留原始信息的换基能否改善均值矩 |
 | 3. BREC | `brec` | 用精确／区间计算确认二元编码的区分，保留未确定项 |
-| 4. 蛋白质预测 | `protein-prepare/train/predict/report` | 相同输入宽度和训练预算下，joint 是否改变预测表现 |
+| 4. 蛋白质预测 | `protein-run/report` | 相同输入宽度和训练预算下，joint 是否改变预测表现 |
 
 分别运行所需实验，不自动启动全部任务：
 
@@ -79,60 +76,89 @@ python -m brec.reproducibility --first outputs/brec_run1 --second outputs/brec_r
 
 ## 蛋白质预测
 
-固定运行 **PROTEINS 和 ENZYMES**。在 100 GiB 内存、32 GiB 显存的服务器上依次执行，避免两个训练进程争用同一张 GPU：
+**完全使用Co-Sparsify，只替换编码。** 固定官方commit `505f6b50f019dc78edc88653d771667c0c561f5f`，直接运行其`run_tud.py`，不复制或重写loader、SPPGN1、Lightning训练器、优化器、scheduler及评估器。适配器仅替换`transform_dict['poly']`，更新同一`pair_x`／`loop_x`接口，并增加只读来源记录与本地结果保存。官方文件不修改。
+
+来源：[运行入口](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/run_tud.py)、[TU配置](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/configs/sppgn/tud.sppgn1.poly.yaml)、[划分](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/datasets/kfold.py)、[训练器](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/lighting_interface/model.py)。
+
+| 项目 | 直接沿用的官方设置 |
+|---|---|
+| 数据 | `PROTEINS_full`、`ENZYMES`；非cleaned版本。原PyG loader的连续node／edge attributes默认关闭，不额外加常数列或标准化 |
+| 划分 | 10折；缺少原10fold文件时StratifiedKFold(shuffle=True, random_state=42)，第r折使用原代码idx_list[r−1]；已有文件直接沿用并记录实际索引 |
+| 初始化 | 第r折seed=(r+1)×1000；不额外重复三种seed |
+| 网络 | SPPGN1，4层，hidden 64，MLP depth 2，BatchNorm、ReLU、dropout 0，原avg pooling及原分类head |
+| 编码宽度 | 官方脚本的8、12、14、16；同一宽度下全部编码模型参数量一致 |
+| 训练 | batch 32、训练drop_last=True、AdamW、lr=0.001、weight_decay=0、100 epochs、5 warmup epochs、原cosine scheduler、norm梯度裁剪1.0 |
+| 选模 | 原val/acc最大；保留原评估器五位小数与原checkpoint并列处理，不改成NLL |
+| 最终评分 | 原脚本将同一个留出折同时作为validation和test；用户明确要求完全沿用。不称为独立test估计 |
+| 汇总 | 每个编码／宽度报告10折分数的均值与总体标准差(ddof=0)，沿用原字段test_acc等；保存raw logits与索引 |
+| 执行 | 原GPU Trainer、原8个torch线程及原4周Timer；只将Comet切换为原生支持的local_log模式并指定本地数据／输出路径 |
+
+配置中的min_lr=1e-6由原scheduler按原代码解释，不另写一个学习率实现。原模型的BatchNorm、真实batch 32及drop_last也由原DataLoader处理，不用逐图梯度累积模拟。
+
+### 九组编码
+
+令宽度K，r=⌊K/2⌋，e=⌊(K−r)/2⌋，j=K−r−e。对K=8／12／14／16，(r,e,j)分别为(4,2,2)、(6,3,3)、(7,3,4)、(8,4,4)。M为对称归一化邻接，B_q=M^q，h_q=B_q 1。
+
+| 设置 | 原模型收到的K维编码 |
+|---|---|
+| `rrwp` | 原生Co-Sparsify RRWP，I,P,…,P^(K−1)，P为行归一化邻接；基线完全走原变换 |
+| `mono` | 原生I,M,…,M^(K−1) |
+| `cheb` | 原生完整Chebyshev基；与mono同次数空间 |
+| `none` | K个零槽；模型和原生节点／边输入不变 |
+| `base` | 前r个monomial通道，余下补零 |
+| `endpoint` | base＋前e个[h₁(u),h₁(v),h₂(u),h₂(v)]，余下j槽补零 |
+| `powers` | endpoint＋前j个已保留B_q(u,v)的逐元素平方；不增加该编码的原始信息 |
+| `joint` | endpoint＋J₁,…,Jⱼ，保留endpoint所有槽 |
+| `joint_mix` | joint的完整K维正交DCT换基，不截断、不增加原始信息 |
+
+新增的joint点对通道由固定三元读出得到：
+
+\[
+J_q(u,v)=A_{uv}\sum_w A_{uw}A_{vw}\sum_t B_q(u,t)B_q(v,t)B_q(w,t).
+\]
+
+内层是三元共享pivot构造，外层用三角形条件作固定读出，接入原点对接口，不加可训练模块。无自环图上J₁涉及四个两两相连的不同顶点，保留一种4-clique相关信号；它不是原完整三元特征多重集，也不声称完整3-FWL等价。程序一次只持有一个局部平面，不保存全n³缓存。所有新编码沿用原变换的float32接口；不新增特征标准化。
+
+主比较为同K的`joint − endpoint`，另报告与`powers`、原生`mono`等的预设比较。joint对endpoint有明确保留关系；joint与完整mono在相同K下交换了通道预算，不预设一般支配。`cheb/mono`和`joint_mix/joint`分别控制相同信息的表示方式。全部配置都报告，不再生成“逐折选最好编码后的独立test结果”。
+
+### 服务器运行
+
+使用Co-Sparsify原环境，按其readme的mamba／Sage／PyG及CUDA扩展说明准备；参考环境是Python 3.11、NumPy 1.26、PyTorch 2.2.2/CUDA 12.1。不要将BREC的NumPy 2.4环境依赖装进此环境。适配器无需超出原仓库的新包。
+
+若服务器尚无原仓库，先准备固定版本（已有checkout直接复用）：
 
 ```bash
-export TU_DATA_ROOT=/path/to/tu
-export PROTEIN_DEVICE=cuda:0
-bash tools/run_rebuttal.sh protein-both
-# 数据尚未放到 TU_DATA_ROOT 时，改用：
-# bash tools/run_rebuttal.sh protein-both --download
+git clone https://github.com/RongqinChen/Co-Sparsify.git Co-Sparsify
+git -C Co-Sparsify checkout 505f6b50f019dc78edc88653d771667c0c561f5f
 ```
 
-两套输出分别在 `$REBUTTAL_OUT/protein_encodings/PROTEINS/` 与 `$REBUTTAL_OUT/protein_encodings/ENZYMES/`，各含 `protein_inputs/`、`protein_training/`、`protein_report.json`。未设置 `REBUTTAL_OUT` 时使用 `outputs/rebuttal`。缓存目录应位于空间充足的本地高速磁盘。旧27槽实验保留在旧目录，不能将旧checkpoint混入新64槽协议；脚本使用新目录避免覆盖。
-
-也可分阶段运行某一个数据集：
+然后从本复现仓库根目录运行：
 
 ```bash
-export PROTEIN_DATASET=PROTEINS  # 或 ENZYMES
-bash tools/run_rebuttal.sh protein-prepare
-bash tools/run_rebuttal.sh protein-train
-bash tools/run_rebuttal.sh protein-predict
-bash tools/run_rebuttal.sh protein-report
+mamba activate gnn222
+export TU_DATA_ROOT=/server/data/TUD
+CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-both 2>&1 | tee cosparsify_tu.log
 ```
 
-无 GPU 时设 `PROTEIN_DEVICE=cpu`。`PROTEIN_CONFIG`可指定共同配置文件，默认`configs/rebuttal/protein.json`；单数据集可用`PROTEIN_OUT`指定新输出位置，`protein-both`始终按数据集隔离目录。
+原loader缺数据时按原流程下载，无额外`--download`。固定两数据集×9编码×4宽度×10折，**共720次原生训练**，每数据集360次。服务器资源为100 GiB内存／32 GiB显存；不自动减batch、改精度、换模型或丢图来规避失败。
 
-九组均使用全部有序三元组（含重复顶点）。选定字典完整保留后补零至64个结构槽，不截断或随机投影；相同backbone给出三个节点的表示，与结构行拼接后送入共同MLP，再对全部三元组平均。这样可以学习结构与节点属性的关联。所有组的模型参数量相同；`none`只将结构槽置零，仍使用相同的节点表示和读出。
+也可先运行完整矩阵中的少量正式条件，后续继续原目录而不重跑已完成项：
 
-| 设置 | 补零前通道数 | 目的 |
-|---|---:|---|
-| `none` | 0 | 共同模型中不加入结构编码的基线 |
-| `polynomial_q1` | 19 | 常数及I、A、M的六个有序坐标提升 |
-| `nonjoint_q1` | 27 | 上述19通道＋六个M²提升及h₁(u)、h₁(v)，保留先前nonjoint对照 |
-| `joint_q1` | 27 | 上述19通道＋全部8个Q=1 joint通道 |
-| `joint_q1_shifted` | 27 | 完整换基(I,M)→(I,I+M)，不增加原始信息 |
-| `polynomial_q2` | 25 | 保留Q=1通道，再加入六个M²坐标提升 |
-| `endpoint_q2` | 37 | 上述25通道＋原定义的全部12个Q=2 endpoint通道 |
-| `joint_q2` | 64 | 上述37通道＋全部27个Q=2 joint通道 |
-| `joint_q2_chebyshev` | 64 | 完整换基(I,M,M²)→(I,M,2M²−I)，不增加原始信息 |
+```bash
+PROTEIN_DATASET=ENZYMES CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-run --encodings rrwp --poly-dims 8 --folds 0
+# 同数据集继续填齐剩余条件：
+PROTEIN_DATASET=ENZYMES CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-run
+PROTEIN_DATASET=ENZYMES bash tools/run_rebuttal.sh protein-report
+```
 
-`nonjoint_q1`的名称指以Q=1基础通道作增广，其额外通道实际使用degree 2。joint来自3-FWL代数，包含共享pivot收缩K_{abc}(u,v,w)=Σₜ B_a(u,t)B_b(v,t)B_c(w,t)；有限Q=1/2字典不等同于完整3-FWL。
+`--reference-root`可指定另一处相同、未修改的官方checkout。每个新TU目录为`$REBUTTAL_OUT/cosparsify_tu/数据集名/`；含`records/`、`predictions/`、`native/`原checkpoint／本地日志，以及最终`protein_report.json`。日志保留原预处理耗时输出；JSON保留原avg_train_time_epoch等指标。旧27／64槽自定义模型结果单独保留，不混入此次比较。
 
-主比较预先固定为 **`joint_q2 − endpoint_q2` 的accuracy差**，同时报告NLL差。前者保留后者全部通道再增广joint。还预设degree增加、Q=1 joint／nonjoint、joint Q=1→2及两组完整换基等比较。所有低预算设置均可从完整joint Q=2字典恢复；这保证原始信息不丢失，不保证训练或泛化一定改善。换基对照只检验相同信息是否更易被模型利用。
-
-每个数据集5个外层fold、3个配对seed、9个变体，各135个任务，合计 **270个任务**，每任务100 epochs、batch size 4。保持初始化、图顺序、参数量和更新预算配对；checkpoint按未舍入验证NLL选择，并列取较早epoch。两个数据集分别报告全部预设配置的逐图logits、每seed OOF accuracy／NLL、10项预设配对差和成本，保留零／负结果。另在每fold／seed内按验证NLL选择编码，并独立汇总其外层测试表现；并列按配置中的固定顺序取首项，绝不按测试分数选。fold×seed不作为独立数据集重复，也不声称已控制蛋白质同源关系。
-
-全部设置共享一次准备：按16384行写入float64的25个polynomial和27个joint通道，endpoint按需生成，两组换基从同一缓存派生，不各存一份全三元组。joint按固定u的平面计算，含identity的项直接化简，其余只对相应种子行的非零位置求和。所需特征磁盘为每图 **416n³字节**，加文件头和小规模统计；准备时检查实际空间，并另留5 GiB。准备／训练进程内存上限均为92 GiB，在100 GiB服务器上保留8 GiB余量；这是检查上限，不是实测占用或显存上限。分块仍处理全部n³对象，不能据此承诺运行时间。
-
-训练每次读取最多65536行。checkpoint保存分块加载函数，反向传播时重读同一块；节点表示显式作为checkpoint参数，保留其梯度及对应设备的dropout随机状态，使用`use_reentrant=False`。标准化只合并训练图的通道和及Gram矩阵，换基后的一、二阶统计直接由其推得；方差使用相对二阶矩的数值下限，避免放大近常数通道的舍入噪声。无需为每个任务扫描所有缓存。默认不设准备／训练时间截止，不删图或采样。
-
-准备阶段不重跑已完成的理论机制实验。保留原始输入、配置、代码及划分身份，不重复校验全部特征文件。启动脚本自动使用 `--resume`，跳过相同身份的完成图／训练任务；预测跳过已有匹配结果。中断的单个训练任务须检查后显式用 `protein-train --retry-incomplete` 从头重跑，不额外归档。`--folds/--seeds/--variants` 可拆分训练，分别写入不同目录；`report --runs` 可合并同一数据集的任务。只改蛋白质代码不会使已完成的 BREC 条件失效；BREC 自身的输入、数值代码、配置和环境仍须匹配。
+完成项先核对实验身份及产物后跳过；完整汇总再核对各编码记录中的实际数据、索引、初始化、模型参数量和原设置一致。改变请求的编码／宽度／折子集不改变实验身份，允许分批继续同一矩阵。删去旧自定义loader／model／trainer后不生成归档；BREC／机制代码不改，不要求重跑。
 
 ## 代码阅读顺序
 
 - BREC：`brec.py` 组织运行，`scheduling.py` 并行调度，`encodings.py` 生成通道，`readouts.py` 作判别。
-- 蛋白质：`protein.py`解析命令，`protein_encodings.py`定义编码及完整换基，`protein_data.py`准备输入，`protein_training.py`训练，`protein_results.py`预测与汇总，`protein_model.py`定义共同模型。
+- TU：`protein.py`调用原始入口并保存来源及结果，`protein_encodings.py`只替换编码，`protein_report.py`汇总原始评分；模型、loader和训练器均来自外部Co-Sparsify checkout。
 
 每次运行的 `manifest.json` 记录配置、输入、代码和环境身份。仓库不再保留旧结果表、静态源码清单或归档导出工具。
 

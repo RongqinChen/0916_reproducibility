@@ -9,3 +9,4 @@ results/
 wandb/
 *.pt
 *.pth
+/Co-Sparsify/

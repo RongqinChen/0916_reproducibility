@@ -1,3 +1,4 @@
-# Install the CPU/CUDA torch wheel appropriate for the server first.
--r rebuttal.txt
-torch>=2.6,<3
+# No additional packages beyond the original Co-Sparsify environment.
+# Follow Co-Sparsify/readme.md (gnn222: Python 3.11, NumPy 1.26,
+# PyTorch 2.2.2/CUDA 12.1, PyG, Sage, Lightning and the listed extensions).
+# Do not install requirements/rebuttal.txt into that reference environment.
