@@ -109,7 +109,7 @@ class BudgetExtensionTests(unittest.TestCase):
                         scalar = sum(sp.Rational(c.numerator,c.denominator)*sp.sqrt(s) for s,c in actual.terms)
                         self.assertEqual(sp.expand(scalar-expected),0,(q,basis,key,triple))
 
-    def check_supervisor(self,first_code=0,finished=True):
+    def check_supervisor(self,first_code=0,finished=True,resources=()):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)/'run'
             calls = []
@@ -126,7 +126,7 @@ class BudgetExtensionTests(unittest.TestCase):
                 def poll(self): return self.code
             with patch.object(extension.subprocess,'Popen',Process):
                 code = extension.main(['--out',str(out),'--brec-file',str(out/'input.npy'),
-                                       '--workers','28'])
+                                       '--workers','28',*resources])
             state = json.loads((out/'extension.json').read_text())
             return code,calls,state
 
@@ -137,6 +137,40 @@ class BudgetExtensionTests(unittest.TestCase):
         self.assertIn('brec_p8.json',calls[0][calls[0].index('--config')+1])
         self.assertIn('triple_encodings_q8_q16.json',calls[1][calls[1].index('--config')+1])
         self.assertEqual(state['completed_stages'],['brec','triple-encodings'])
+
+    def test_supervisor_passes_100_workers_and_110_gib_to_both_stages(self):
+        code,calls,state = self.check_supervisor(resources=('--workers','100','--memory-gib','110'))
+        self.assertEqual(code,0)
+        self.assertEqual(len(calls),2)
+        for command in calls:
+            self.assertEqual(command[command.index('--workers')+1],'100')
+            self.assertEqual(float(command[command.index('--memory-gib')+1]),110)
+        self.assertEqual(state['memory_gib_override'],110)
+
+    def test_real_resource_overrides_are_recorded_in_both_manifests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph = nx.to_graph6_bytes(nx.cycle_graph(3),header=False).strip()
+            source = root/'brec.npy'
+            np.save(source,np.full(51200,graph,dtype='S16'),allow_pickle=False)
+            for experiment,config_name in (('brec','brec_p8.json'),
+                                           ('triple-encodings','triple_encodings_q8_q16.json')):
+                config = json.loads((ROOT/'configs/rebuttal'/config_name).read_text())
+                config.update(expected_brec_sha256=sha256(source),q_values=[2],
+                              relabels=1,reliability_relabels=0,memory_gib=4)
+                path = root/f'{experiment}.json'
+                path.write_text(json.dumps(config))
+                command = [sys.executable,'-m','rebuttal_experiments',experiment,
+                    '--config',str(path),'--brec-file',str(source),'--out',str(root/experiment),
+                    '--pair-ids','0','--workers','100','--memory-gib','110','--reserve-gib','8']
+                result = subprocess.run(command,cwd=ROOT,env=dict(os.environ,PYTHONHASHSEED='0'),
+                                        capture_output=True,text=True,timeout=60)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                manifest = json.loads((root/experiment/'manifest.json').read_text())
+                self.assertEqual(manifest['status'],'execution_finished')
+                recorded = manifest['identity']['configuration']
+                self.assertEqual(recorded['memory_gib'],110)
+                self.assertEqual(recorded['scheduling']['workers'],100)
 
     def test_supervisor_does_not_continue_after_failure_or_existing_writer(self):
         for first_code,finished in ((7,True),(0,False)):

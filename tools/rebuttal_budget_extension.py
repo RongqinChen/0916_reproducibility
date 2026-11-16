@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -23,10 +24,16 @@ def main(argv=None):
     parser.add_argument('--brec-file', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--workers', type=int, default=len(os.sched_getaffinity(0)))
+    parser.add_argument('--memory-gib', type=float,
+                        help='Override the total RSS budget for each sequential stage in GiB')
     parser.add_argument('--reserve-gib', type=float, default=8)
     parser.add_argument('--pair-ids', type=int, nargs='+')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args(argv)
+    if (args.workers < 1 or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0
+            or args.memory_gib is not None and
+            (not math.isfinite(args.memory_gib) or args.memory_gib <= 0)):
+        parser.error('Positive workers and memory budget, and finite nonnegative reserve required')
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     with (out/'.budget-extension.lock').open('a') as lock:
@@ -39,7 +46,9 @@ def main(argv=None):
         pending_signal = None
         previous = {}
         state = {'status': 'running', 'supervisor_pid': os.getpid(),
-                 'started_unix_seconds': time.time(), 'completed_stages': []}
+                 'started_unix_seconds': time.time(), 'completed_stages': [],
+                 'workers': args.workers, 'memory_gib_override': args.memory_gib,
+                 'reserve_gib': args.reserve_gib}
 
         def save(**updates):
             state.update(updates, updated_unix_seconds=time.time())
@@ -66,6 +75,8 @@ def main(argv=None):
                     '--config', str(ROOT/'configs/rebuttal'/config),
                     '--brec-file', str(args.brec_file.resolve()), '--out', str(stage_out),
                     '--workers', str(args.workers), '--reserve-gib', str(args.reserve_gib)]
+                if args.memory_gib is not None:
+                    scientific += ['--memory-gib', str(args.memory_gib)]
                 if args.pair_ids is not None:
                     scientific += ['--pair-ids', *map(str, args.pair_ids)]
                 if args.resume:

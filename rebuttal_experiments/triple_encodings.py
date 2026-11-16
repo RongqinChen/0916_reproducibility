@@ -172,10 +172,14 @@ def main(argv=None):
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--pair-ids',nargs='+',type=int)
     parser.add_argument('--workers',type=int,default=max(1,len(ordered_cpus())))
+    parser.add_argument('--memory-gib',type=float,
+                        help='Override the total scheduler+worker RSS budget in GiB')
     parser.add_argument('--reserve-gib',type=float,default=8)
     parser.add_argument('--resume',action='store_true')
     args = parser.parse_args(argv)
     config = configuration(args.config)
+    if args.memory_gib is not None:
+        config['memory_gib'] = args.memory_gib
     validate(config)
     ids = args.pair_ids if args.pair_ids is not None else list(range(400))
     if (not ids or len(set(ids))!=len(ids) or any(pid<0 or pid>=400 for pid in ids)

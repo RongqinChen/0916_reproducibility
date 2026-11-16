@@ -297,6 +297,8 @@ def main(argv=None):
     parser.add_argument('--out', required=True)
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--workers', type=int, help='Maximum parallel conditions; default: allowed CPU count')
+    parser.add_argument('--memory-gib', type=float,
+                        help='Override the configuration total scheduler+worker RSS budget in GiB')
     parser.add_argument('--reserve-gib', type=float, default=8,
                         help='Keep this much system RAM available; default: 8 GiB')
     args = parser.parse_args(argv)
@@ -304,6 +306,8 @@ def main(argv=None):
     if workers < 1 or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0:
         parser.error('Positive --workers and finite nonnegative --reserve-gib required')
     config = configuration(args.config)
+    if args.memory_gib is not None:
+        config['memory_gib'] = args.memory_gib
     try:
         validate_configuration(config)
     except ValueError as exc:

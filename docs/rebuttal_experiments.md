@@ -134,6 +134,19 @@ bash tools/run_rebuttal.sh budget-extend --workers 28 --resume
 
 监督进程的阶段状态保存在 `extension.json`，二元结果在 `brec/`，三元结果在 `triple_encodings/`。也可分别使用原入口加 `--config configs/rebuttal/brec_p8.json` 或 `--config configs/rebuttal/triple_encodings_q8_q16.json`。变更协议使用新目录，避免与旧结果混写。
 
+在另一台服务器使用 100 个 CPU 工作进程和 110 GiB RSS 预算时，先同步当前代码和数据，再从仓库根目录运行：
+
+```bash
+source ~/miniforge3/bin/activate gnn270
+export BREC_FILE="$HOME/GSE_Toward_kFWL/data/brec_raw/brec_v3.npy"
+export REBUTTAL_OUT=outputs/rebuttal_110g_100cpu
+bash tools/run_rebuttal.sh budget-extend --workers 100 --memory-gib 110 --reserve-gib 8
+# 同一参数、输入、代码和输出目录下，中断后续跑：
+bash tools/run_rebuttal.sh budget-extend --workers 100 --memory-gib 110 --reserve-gib 8 --resume
+```
+
+`--memory-gib` 覆盖配置中的内存预算，并写入每阶段的运行身份。两组顺序运行，各自内部最多 100 个单线程工作进程；实际并发仍受可用 CPU 亲和性、系统可用内存和准入预估限制。原 `brec` 与 `triple-encodings` 入口也接受相同的资源参数。`--reserve-gib 8` 另行保留系统可用内存，不属于实验 RSS 预算。
+
 补充配置使用 `memory_reservation_scale: 0.6` 校准启动时的静态内存预估，以利用实测余量增加并发；实际 RSS 总预算仍为 52 GiB，系统仍保留 8 GiB。调度器持续按实测 RSS 提高进程预留量，并保留超预算监控。未指定时系数为 1，旧协议的默认准入行为不变。`progress.json` 额外记录预留字节数、校准系数及可用 CPU 槽位。
 
 ## 三元 PPGN 配对 BREC
