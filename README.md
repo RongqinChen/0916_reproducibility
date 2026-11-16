@@ -2,6 +2,16 @@
 
 Experiment code and supplementary rebuttal experiments. BREC and mechanism experiments target Python 3.12 on Linux. TU experiments use Co-Sparsify's loader, Lightning training, and evaluation pipeline, with the backbone replaced by GNNPlus GINE from `gnnplus_official`. Run all commands from this directory and specify your own data paths and output directories.
 
+## Complete BREC campaign through reproduce.py
+
+```bash
+python -m pip install -r requirements/brec_suite.txt
+python -m pip install 'torch>=2.7,<3' --index-url https://download.pytorch.org/whl/cpu
+python reproduce.py brec-run --brec-file /data/BREC/brec_v3.npy --root /results/brec_exact_v2 --workers 44 --memory-gib 100
+```
+
+This entry point uses exact structural aggregation, complete relabeling controls, memory-bounded workers, frozen provenance, and verified resume. The existing `brec-plan` / `brec-run` / `brec-report` commands now serve this protocol. See [BREC commands and guarantees](docs/brec_suite.md) for the full experiment list and resource options. Use a new output root; historical frozen plans remain separate.
+
 ## Running the supplementary experiments
 
 See the [supplementary experiment guide](docs/rebuttal_experiments.md) for environments, inputs, and complete commands. Each command runs only the specified task:

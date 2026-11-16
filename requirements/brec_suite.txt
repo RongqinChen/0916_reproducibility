@@ -1,0 +1,3 @@
+# CPU BREC structural experiments; install the CPU PyTorch wheel for neural runs.
+-r ../requirements.txt
+python-flint>=0.6,<1

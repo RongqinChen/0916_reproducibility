@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable launch commands with the paper's explicit scientific settings."""
+"""Repository entry point for exact BREC experiments and the paper's other protocols."""
 import argparse
 import json
 import os
@@ -41,12 +41,28 @@ def launch(args, command, threads=1):
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
+BREC_ACTIONS = ('brec-plan', 'brec-run', 'brec-report', 'brec-rescore', 'brec-worker')
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in BREC_ACTIONS:
+        # Establish the process policy before importing numerical libraries.
+        from brec.determinism import ensure_startup, prepare_environment
+        prepare_environment()
+        ensure_startup()
+        from brec.suite_cli import main as brec_main
+        return brec_main(sys.argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
     datasets = config('object_datasets')
     sub.add_parser('list', help='list object datasets, domains, and evidence status')
-    for name in ('prepare', 'objects', 'brec-plan', 'brec-run', 'brec-report', 'ppgn'):
+    for command, description in (
+        ('brec-plan', 'prepare the complete exact BREC campaign without executing it'),
+        ('brec-run', 'run/resume BREC with exact aggregates and memory-bounded parallelism'),
+        ('brec-report', 'summarize BREC results and unresolved/failed cases'),
+        ('brec-rescore', 'recompute numerical neural scores from saved embeddings')):
+        sub.add_parser(command, help=description)
+    for name in ('prepare', 'objects', 'ppgn'):
         p = sub.add_parser(name)
         p.add_argument('--dry-run', action='store_true', help='print commands without executing')
         if name in ('prepare', 'objects'):
@@ -59,18 +75,10 @@ def main():
             p.add_argument('--workers', type=int, default=12)
             p.add_argument('--memory-gib', type=float, default=100)
             p.add_argument('--resume', action='store_true')
-        if name.startswith('brec-'):
-            p.add_argument('--root', type=Path, required=True)
-        if name in ('brec-plan', 'ppgn'):
+        if name == 'ppgn':
             p.add_argument('--brec-file', type=Path, required=True)
             p.add_argument('--trust-pickle', action='store_true',
                            help='allow loading the official object-array BREC file')
-        if name == 'brec-run':
-            p.add_argument('--workers', type=int, default=100)
-            p.add_argument('--memory-gib', type=float, default=100)
-            p.add_argument('--reserve-gib', type=float, default=8)
-            p.add_argument('--memory-factor', type=float, default=1.3)
-            p.add_argument('--scratch-root', type=Path)
         if name == 'ppgn':
             p.add_argument('--out', type=Path, required=True)
             p.add_argument('--gpus', nargs='+', default=['0', '1'])
@@ -117,27 +125,6 @@ def main():
                         workers=args.workers, memory_gb=args.memory_gib,
                         resume=args.resume)
         launch(args, [py, '-m', 'discriminability.run', *flags(settings)])
-    elif args.action == 'brec-plan':
-        if args.root.exists() and any(args.root.iterdir()):
-            parser.error('Plan needs a new output root; resume an existing plan with brec-run')
-        settings = config('brec_protocol')
-        settings.update(root=str(args.root), brec_file=str(args.brec_file),
-                        trust_pickle=args.trust_pickle)
-        launch(args, [py, '-m', 'brec.schedule', 'plan', *flags(settings)])
-    elif args.action in ('brec-run', 'brec-report'):
-        if not (args.root / 'plan.json').is_file() and not args.dry_run:
-            parser.error('Missing plan.json; create it with brec-plan first')
-        if args.action == 'brec-run':
-            settings = dict(root=str(args.root), slots=args.workers,
-                            memory_gib=args.memory_gib, reserve_gib=args.reserve_gib,
-                            memory_factor=args.memory_factor,
-                            scratch_root=str(args.scratch_root) if args.scratch_root else None,
-                            pin_cpus=sys.platform.startswith('linux'))
-            launch(args, [py, str(args.root / 'frozen/brec_schedule.py'), 'run', *flags(settings)])
-        else:
-            launch(args, [py, str(args.root / 'frozen/brec_report.py'),
-                          '--runs-file', str(args.root / 'completed_runs.json'),
-                          '--out', str(args.root / 'report.json')])
     elif args.action == 'ppgn':
         settings = config('ppgn_protocol')
         settings.update(brec_file=str(args.brec_file), out_dir=str(args.out),
