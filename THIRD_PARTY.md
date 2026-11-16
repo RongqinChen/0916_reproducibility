@@ -1,5 +1,13 @@
 # Third-party code and attribution
 
+TU encoding comparisons execute the unmodified
+[Co-Sparsify](https://github.com/RongqinChen/Co-Sparsify) checkout at commit
+`505f6b50f019dc78edc88653d771667c0c561f5f`. The checkout is an external
+dependency, not redistributed as part of this repository. The adapter replaces
+only the `poly` transform registry entry and adds local result capture; the
+upstream dataset, SPPGN1 model, training loop and evaluators remain unchanged.
+The original environment and any upstream license terms apply.
+
 `gnnplus_official/` is a locally modified copy of
 [GNNPlus](https://github.com/LUOyk1999/GNNPlus), accompanying
 *Can Classic GNNs Be Strong Baselines for Graph-level Tasks?* (ICML 2025).

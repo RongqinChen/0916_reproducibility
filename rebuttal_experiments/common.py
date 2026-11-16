@@ -86,6 +86,27 @@ def environment():
             'packages': versions}
 
 
+def resume_identity(identity):
+    """Keep completed numerical work reusable after removing an unused experiment."""
+    bookkeeping = {'__main__.py', 'common.py', 'objects.py', 'object_comparison.py'}
+    if 'expected_brec_sha256' in identity['configuration']:
+        # Protein-only edits do not change a completed BREC condition.
+        bookkeeping.update(name for name in identity['sources']
+                           if name.startswith('protein') or name == 'tu_data.py')
+    if identity['configuration'].get('protocol') == 'gnnplus-gine-tu-structural-edge-v1':
+        # Native TU numerics depend on the pinned upstream tree and these adapters.
+        bookkeeping.update(name for name in identity['sources']
+                           if name not in {'__init__.py', 'protein.py', 'protein_encodings.py',
+                                           'protein_gnnplus.py'})
+    environment = identity['environment']
+    return {**identity,
+            'sources': {name: digest for name, digest in identity['sources'].items()
+                        if name not in bookkeeping},
+            'environment': {**environment, 'packages': {
+                name: version for name, version in environment['packages'].items()
+                if name != 'pynauty'}}}
+
+
 @contextlib.contextmanager
 def run_directory(out, config, inputs=(), resume=False):
     """Lock a new run, or resume only with the identical input/code/config identity."""
@@ -103,10 +124,13 @@ def run_directory(out, config, inputs=(), resume=False):
         manifest = out / 'manifest.json'
         if existed:
             old = json.loads(manifest.read_text())
-            if old['identity'] != identity:
+            if resume_identity(old['identity']) != resume_identity(identity):
                 raise ValueError('Resume identity mismatch; use a new output directory')
         record = {'identity': identity, 'identity_sha256': identity_hash(identity),
                   'status': 'running'}
+        if existed:
+            record.update(identity=old['identity'], identity_sha256=old['identity_sha256'],
+                          current_sources=identity['sources'])
         atomic_json(manifest, record)
         try:
             yield out, record['identity_sha256']
@@ -195,23 +219,3 @@ def permutations(n, count, seed):
         rng.shuffle(order)
         result.append(np.asarray(order, dtype='int64'))
     return result
-
-
-def topology(path):
-    """Read the existing compact topology format without pickle."""
-    import numpy as np
-    with np.load(path, allow_pickle=False) as data:
-        counts = data['counts'].astype('int64')
-        edges = data['edges'].astype('int64')
-        offsets = data['offsets'].astype('int64')
-        if (edges.ndim != 2 or edges.shape[0] != 2 or len(offsets) != len(counts) + 1
-                or offsets[0] != 0 or offsets[-1] != edges.shape[1]
-                or np.any(np.diff(offsets) < 0)):
-            raise ValueError('Invalid compact topology format')
-        for graph_id, n in enumerate(counts):
-            local = edges[:, offsets[graph_id]:offsets[graph_id + 1]]
-            adjacency = np.zeros((int(n), int(n)), dtype='int64')
-            if local.size and (local.min() < 0 or local.max() >= n):
-                raise ValueError('Invalid topology endpoint')
-            np.add.at(adjacency, (local[0], local[1]), 1)
-            yield graph_id, simple_adjacency(adjacency)

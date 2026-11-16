@@ -1,25 +1,56 @@
 {
-  "dataset": "ENZYMES",
-  "expected_graphs": {"ENZYMES": 600, "PROTEINS": 1113, "PROTEINS_full": 1113},
-  "folds": 5,
-  "validation_fraction": 0.2,
-  "split_seed": 20261112,
-  "seeds": [0, 1, 2],
-  "initialization_seed": 20261112,
-  "hidden_dim": 64,
-  "layers": 3,
-  "dropout": 0.1,
-  "learning_rate": 0.001,
-  "weight_decay": 0.00001,
-  "epochs": 100,
-  "batch_size": 4,
-  "structural_chunk_size": 4096,
-  "checkpoint_structural_chunks": true,
-  "feature_chunk_size": 256,
-  "max_cached_scalars_per_graph": 100000000,
-  "prepare_seconds_per_graph": 1800,
-  "seconds_per_job": 86400,
-  "memory_gib": 4,
-  "training_memory_gib": 16,
-  "torch_threads": 1
+  "protocol": "gnnplus-gine-tu-structural-edge-v1",
+  "reference_root": "Co-Sparsify",
+  "reference_commit": "505f6b50f019dc78edc88653d771667c0c561f5f",
+  "reference_config": "configs/sppgn/tud.sppgn1.poly.yaml",
+  "batch_size_override": 64,
+  "model_backend": "gnnplus_gine",
+  "gnnplus": {
+    "hidden_dim": 256,
+    "layers": 3,
+    "dropout": 0.0,
+    "residual": true,
+    "ffn": false,
+    "head_layers": 3,
+    "activation": "relu",
+    "pooling": "mean"
+  },
+  "datasets": [
+    "PROTEINS_full",
+    "ENZYMES"
+  ],
+  "poly_dims": [
+    8,
+    12,
+    14,
+    16
+  ],
+  "encodings": [
+    "rrwp",
+    "mono",
+    "cheb",
+    "none",
+    "base",
+    "endpoint",
+    "powers",
+    "joint",
+    "joint_mix"
+  ],
+  "folds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "primary_comparison": [
+    "joint",
+    "endpoint"
+  ],
+  "evaluation": "Native Co-Sparsify ten-fold protocol; the same held-out fold selects the checkpoint and supplies the final score."
 }

@@ -4,8 +4,7 @@
 |---|---|---|
 | 精确机制对照 | `rebuttal_experiments/mechanisms.py` | Q=1 的完整有序三元组；精确分数；多重集和均值矩 |
 | 补充 BREC | `rebuttal_experiments/brec.py` | 完整二元域；正则图用分数，其他图用区间；多重集或均值矩 |
-| 对象域控制 | `rebuttal_experiments/object_comparison.py` | node/edge/pair；float32/64；容差、单位和边界参考 |
-| 蛋白质预测 | `rebuttal_experiments/protein_data.py`、`protein_model.py` | float64 特征缓存、float32 模型输入；完整行交互后聚合 |
+| TU预测 | `protein.py`、`protein_encodings.py`、`protein_gnnplus.py` | Co-Sparsify数据／十折训练，GNNPlus GINE接收loop／pair结构通道 |
 | PPGN | `brec/ppgn_models.py`、`ppgn_realization.py` | 指定的对称幂输入、pair/triple backbone 和神经读出 |
 | 更多对象区分任务 | `discriminability/` | 指定宽度、轨道／FWL 参考、共同方向比较和 MIS |
 
@@ -14,8 +13,10 @@
 - 完整多重集保留各行出现次数。区间重叠不能证明精确相等；兼容匹配不存在才能确认多重集不同。
 - BREC 的未确定、资源受限和未执行项留在分母中；检出下界较大不自动证明真实表达力更强。
 - 对象域使用跨通道一致的方向交换，不逐通道独立挑方向。MIS 最优只说明数值相似图求解完成，不认证结构特征的真实值。
-- 蛋白质三组共同使用 27 槽输入。nonjoint 加入 degree-2 seeds，因此等宽不等于相同 Q 或构造成本。
-- 蛋白质标准化只拟合训练记录，checkpoint 只按验证 NLL 选择，测试预测单独执行。fold×seed 不作为独立数据集重复。
+
+- TU使用Co-Sparsify commit 505f6b50f019dc78edc88653d771667c0c561f5f的数据、十折训练、优化器和评估器；PROTEINS_full与ENZYMES、9编码、宽度8/12/14/16、10折，共720次训练。骨干替换为`gnnplus_official`的GINE（hidden 256、3层）、SAN图头和mean pooling，pair_x映射到原始有向边、loop_x拼入节点输入。物理batch显式设为64。
+- 同一留出折用于checkpoint选择和最终评分；按用户明确指示不另设独立test，均值及总体标准差按原10折口径报告。只改编码变换并额外保存本地记录，不用此前自定义GNN、64槽或独立test流程。
+- joint用三元共享pivot的固定点对读出，通过原pair_x／loop_x接入，不加可训练模块。joint保留endpoint；powers是已有通道的逐元素平方；joint_mix是完整可逆通道换基。有限读出不等同于完整三元字典或完整3-FWL。
 
 ## PPGN 输入和模型
 
