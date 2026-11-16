@@ -9,6 +9,9 @@
 ```bash
 bash tools/run_rebuttal.sh mechanisms
 bash tools/run_rebuttal.sh brec
+bash tools/run_rebuttal.sh triple-encodings
+bash tools/run_rebuttal.sh budget-extend
+bash tools/run_rebuttal.sh triple-ppgn
 bash tools/run_rebuttal.sh objects
 
 bash tools/run_rebuttal.sh protein-prepare
@@ -27,6 +30,8 @@ bash tools/run_rebuttal.sh protein-report
 | `mechanisms.py` | 两项精确机制对照 |
 | `brec.py` | BREC 配置循环、重标号对照及结果汇总 |
 | `scheduling.py` | BREC 多进程调度、CPU 绑定及总内存预算监控 |
+| `triple_ppgn.py`、`triple_ppgn_training.py` | 旧版三元 PPGN 的三组配对 BREC 实验、GPU 调度与 RPC |
+| `triple_encodings.py`、`triple_exact.py` | 不训练网络的三元编码 BREC、精确根式运算及加权轨道计算 |
 | `encodings.py`、`intervals.py`、`readouts.py` | 编码公式、区间算术和判别规则 |
 | `objects.py`、`object_comparison.py` | 对象域实验流程、特征构造及比较 |
 | `protein.py` | 蛋白质实验的命令参数 |

@@ -3,16 +3,19 @@ from collections import Counter
 from fractions import Fraction
 import itertools
 from math import isqrt
+from pathlib import Path
 import random
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import networkx as nx
 import numpy as np
 
-from rebuttal_experiments.brec import aligned_control, reliability_control, validate_configuration
+from rebuttal_experiments.brec import (aligned_control, pending_conditions, reliability_control,
+                                       reliability_mapping, validate_configuration)
 from rebuttal_experiments.common import Budget
-from rebuttal_experiments.encodings import feature_matrix, moments
+from rebuttal_experiments.encodings import feature_matrix, matmul, moments
 from rebuttal_experiments.intervals import Interval
 from rebuttal_experiments.readouts import (
     DIFFERENT, EQUAL, UNRESOLVED, exact_multiset, interval_multiset, mean_decision)
@@ -132,6 +135,33 @@ class IntervalArithmeticTests(unittest.TestCase):
 
 
 class IndependentEncodingTests(unittest.TestCase):
+    def test_sparse_matmul_matches_dense_endpoints_exactly(self):
+        rng = random.Random(903)
+        for mode in ('fraction', 'interval'):
+            for bits in (8, 128, 512):
+                left = np.empty((7, 9), dtype=object)
+                right = np.empty((9, 5), dtype=object)
+                make = Fraction if mode == 'fraction' else lambda x: Interval.exact(x, bits)
+                for i, j in np.ndindex(left.shape):
+                    left[i, j] = make(Fraction(rng.randrange(-5, 6), 3) if (
+                        i > 0 and (i >= 4 or j % 4 == 0)) else 0)
+                for i, j in np.ndindex(right.shape):
+                    right[i, j] = make(Fraction(rng.randrange(-5, 6), 7))
+                if mode == 'interval':
+                    # An interval containing zero must still participate.
+                    left[1, 1] = Interval(-2, 3, bits)
+                    right[1, 3] = Interval(-7, 9, bits)
+                original_left, original_right = left.copy(), right.copy()
+                expected = left @ right
+                actual = matmul(left, right)
+                self.assertTrue(np.array_equal(actual, expected))
+                self.assertTrue(np.array_equal(left, original_left))
+                self.assertTrue(np.array_equal(right, original_right))
+                self.assertTrue(np.array_equal(matmul(left, right[:, :1]), expected[:, :1]))
+        self.assertTrue(np.array_equal(matmul(np.empty((3, 0), dtype=object),
+                                              np.empty((0, 4), dtype=object)),
+                                       np.zeros((3, 4))))
+
     def test_all_budgets_and_moments_against_fraction_oracle(self):
         graphs = [nx.star_graph(4), nx.disjoint_union(nx.cycle_graph(3), nx.path_graph(2)),
                   nx.complete_graph(4), nx.complete_bipartite_graph(3, 3)]
@@ -186,19 +216,63 @@ class IndependentEncodingTests(unittest.TestCase):
         changed = adjacency[np.ix_(permutation, permutation)]
         self.assertFalse(np.array_equal(adjacency, changed))
         old_to_new = np.argsort(permutation)
-        mapping = dict(enumerate(old_to_new.tolist()))
         original6 = nx.to_graph6_bytes(nx.from_numpy_array(adjacency), header=False).strip()
         changed6 = nx.to_graph6_bytes(nx.from_numpy_array(changed), header=False).strip()
         data = np.full(51200, original6, dtype='S16')
         data[400 * 64 + 1] = changed6
         config = {'seed': 0, 'reliability_relabels': 2}
-        with patch('networkx.algorithms.isomorphism.GraphMatcher.isomorphisms_iter',
-                   return_value=iter([mapping])):
+        with patch('pynauty.canon_label', side_effect=[list(range(6)), old_to_new.tolist()]):
             checks = reliability_control(data, 0, 4, 'chebyshev', 'endpoint',
                                          'exact', 128, config, Budget(None, 3))
         self.assertEqual(checks[0]['control_old_to_new'], old_to_new.tolist())
         self.assertEqual(len(checks), 3)
         self.assertTrue(checks[0]['official_representatives']['aligned_exact_equal'])
+
+    def test_reliability_mapping_is_verified_for_multiple_graph_families(self):
+        rng = random.Random(913)
+        graphs = [nx.empty_graph(6), nx.path_graph(6), nx.cycle_graph(6),
+                  nx.star_graph(5), nx.complete_graph(6), nx.complete_bipartite_graph(3, 3)]
+        for graph in graphs:
+            adjacency = nx.to_numpy_array(graph, dtype=np.int64)
+            for _ in range(4):
+                permutation = list(range(len(graph)))
+                rng.shuffle(permutation)
+                changed = adjacency[np.ix_(permutation, permutation)]
+                # Falling back to VF2 here reintroduces an unbounded symmetric-graph search.
+                with patch('networkx.algorithms.isomorphism.GraphMatcher',
+                           side_effect=AssertionError('VF2 must not be used for control alignment')):
+                    mapping = reliability_mapping(adjacency, changed)
+                self.assertEqual(sorted(mapping.tolist()), list(range(len(graph))))
+                inverse = np.argsort(mapping)
+                self.assertTrue(np.array_equal(adjacency[np.ix_(inverse, inverse)], changed))
+
+    def test_nonisomorphic_reliability_graphs_are_rejected(self):
+        # Same node/edge count and degree sequence; a permutation cannot align them.
+        first = nx.to_numpy_array(nx.cycle_graph(6), dtype=np.int64)
+        second = nx.to_numpy_array(nx.disjoint_union(nx.cycle_graph(3), nx.cycle_graph(3)), dtype=np.int64)
+        with self.assertRaisesRegex(ValueError, 'not isomorphic'):
+            reliability_mapping(first, second)
+
+    def test_bad_canonical_orders_are_rejected(self):
+        adjacency = nx.to_numpy_array(nx.path_graph(4), dtype=np.int64)
+        with patch('pynauty.canon_label', return_value=[0, 0, 1, 2]):
+            with self.assertRaisesRegex(ValueError, 'canonical vertex ordering'):
+                reliability_mapping(adjacency, adjacency)
+
+    def test_preflight_checks_controls_without_testing_main_pair_isomorphism(self):
+        first, other = [nx.to_graph6_bytes(graph, header=False).strip() for graph in (
+            nx.cycle_graph(6), nx.disjoint_union(nx.cycle_graph(3), nx.cycle_graph(3)))]
+        data = np.full(51200, first, dtype='S16')
+        data[1] = other  # A valid nonisomorphic main pair must still be scheduled.
+        config = {'bases': ['monomial'], 'variants': ['polynomial'], 'q_values': [2],
+                  'mean_p_values': [1], 'max_candidate_edges': 10000}
+        with tempfile.TemporaryDirectory() as directory:
+            tasks = list(pending_conditions(data, [0], config, Path(directory), 'test'))
+            self.assertEqual(len(tasks), 2)
+            data[400 * 64 + 1] = other  # Nonisomorphic control must fail before scheduling.
+            pending = pending_conditions(data, [0], config, Path(directory), 'test')
+            with self.assertRaisesRegex(ValueError, 'Reliability preflight failed for pair000'):
+                next(pending)
 
 
 class ReadoutSoundnessTests(unittest.TestCase):

@@ -21,14 +21,18 @@ from .common import (Budget, ResourceLimit, atomic_json,
                      configuration, hard_wall_limit, permutations, run_directory,
                      sha256, simple_adjacency)
 from .encodings import feature_matrix, moments
+from .runtime import report_phase
 from .scheduling import estimate_bytes, ordered_cpus, run_tasks
 
 
 def validate_configuration(config):
     """Reject invalid protocols before creating output or starting workers."""
     choices = {'bases': {'monomial', 'chebyshev'},
-               'variants': {'polynomial', 'endpoint'}}
+               'variants': {'polynomial', 'endpoint'},
+               'readouts': {'multiset', 'mean'}}
     for key, allowed in choices.items():
+        if key == 'readouts' and key not in config:
+            continue
         values = config.get(key)
         if (not isinstance(values, list) or not values
                 or any(not isinstance(x, str) or x not in allowed for x in values)
@@ -43,6 +47,9 @@ def validate_configuration(config):
             raise ValueError(f'{key} must contain distinct integers >= {minimum}')
     if config['precision_bits'] != sorted(config['precision_bits']):
         raise ValueError('precision_bits must increase')
+    scale = config.get('memory_reservation_scale', 1.0)
+    if type(scale) not in (int, float) or not math.isfinite(scale) or not 0 < scale <= 1:
+        raise ValueError('memory_reservation_scale must be in (0,1]')
     for key, minimum in (('relabels', 1), ('reliability_relabels', 0),
                          ('seed', 0), ('max_candidate_edges', 1)):
         if type(config.get(key)) is not int or config[key] < minimum:
@@ -102,7 +109,10 @@ def aligned_control(original, changed, new_to_old, mode):
 def relabel_controls(graphs, originals, q, basis, variant, mode, bits, config, pid, budget):
     result = []
     for graph_index, (graph, original) in enumerate(zip(graphs, originals)):
-        for permutation in permutations(len(graph), config['relabels'], config['seed'] + 1009 * pid + graph_index):
+        for index, permutation in enumerate(permutations(
+                len(graph), config['relabels'], config['seed'] + 1009 * pid + graph_index)):
+            report_phase('main_relabel', graph=graph_index, relabel=index + 1,
+                         total=config['relabels'], bits=bits)
             changed = feature_matrix(graph[np.ix_(permutation, permutation)], q, 2, variant,
                                      basis, mode, bits, budget)
             result.append({'graph': graph_index, 'new_index_to_old': permutation.tolist(),
@@ -110,24 +120,58 @@ def relabel_controls(graphs, originals, q, basis, variant, mode, bits, config, p
     return result
 
 
+def reliability_mapping(first, second):
+    """Find and verify a control-only isomorphism without VF2 backtracking.
+
+    Canonical vertex orders come from nauty. The resulting permutation is
+    independently checked against the integer adjacencies before it is used.
+    Main graph pairs are never passed to this function.
+    """
+    import pynauty
+    first, second = simple_adjacency(first), simple_adjacency(second)
+    n = len(first)
+    if len(second) != n:
+        raise ValueError('The official reliability representatives have different node counts')
+    orders = []
+    for adjacency in (first, second):
+        graph = pynauty.Graph(n, directed=False, adjacency_dict={
+            i: np.flatnonzero(adjacency[i]).tolist() for i in range(n)})
+        order = pynauty.canon_label(graph)
+        if sorted(order) != list(range(n)):
+            raise ValueError('Invalid canonical vertex ordering')
+        orders.append(order)
+    old_to_new = np.empty(n, dtype='int64')
+    old_to_new[orders[0]] = orders[1]
+    new_to_old = np.argsort(old_to_new)
+    if not np.array_equal(first[np.ix_(new_to_old, new_to_old)], second):
+        raise ValueError('The official reliability representatives are not isomorphic')
+    return old_to_new
+
+
 def reliability_control(data, pid, q, basis, variant, mode, bits, config, budget):
-    import networkx as nx
     graphs = [graph_at(data, (pid + 400) * 64 + i) for i in range(2)]
     if mode == 'exact' and not all(is_regular(g) for g in graphs):
         mode = 'interval'
-    matcher = nx.algorithms.isomorphism.GraphMatcher(nx.from_numpy_array(graphs[0]),
-                                                    nx.from_numpy_array(graphs[1]))
-    mapping = next(matcher.isomorphisms_iter(), None)
-    if mapping is None:
-        raise ValueError('The official reliability representatives are not isomorphic')
+    if budget:
+        budget.check()
+    report_phase('reliability_mapping', nodes=len(graphs[0]))
+    mapping = reliability_mapping(*graphs)
+    if budget:
+        budget.check()
     # The isomorphism is used ONLY to align a known-isomorphic control. It is
     # never a preprocessing step or input to the main graph comparison.
-    new_to_old = np.argsort([mapping[i] for i in range(len(graphs[0]))])
+    new_to_old = np.argsort(mapping)
+    report_phase('reliability_features', graph=0, bits=bits)
     original = feature_matrix(graphs[0], q, 2, variant, basis, mode, bits, budget)
+    report_phase('reliability_features', graph=1, bits=bits)
     changed = feature_matrix(graphs[1], q, 2, variant, basis, mode, bits, budget)
+    report_phase('reliability_alignment')
     result = [{'official_representatives': aligned_control(original, changed, new_to_old, mode),
-               'control_old_to_new': [mapping[i] for i in range(len(graphs[0]))]}]
-    for permutation in permutations(len(graphs[0]), config['reliability_relabels'], config['seed'] + 7919 * pid):
+               'control_old_to_new': mapping.tolist()}]
+    for index, permutation in enumerate(permutations(
+            len(graphs[0]), config['reliability_relabels'], config['seed'] + 7919 * pid)):
+        report_phase('reliability_relabel', relabel=index + 1,
+                     total=config['reliability_relabels'], bits=bits)
         relabelled = feature_matrix(graphs[0][np.ix_(permutation, permutation)], q, 2,
                                     variant, basis, mode, bits, budget)
         result.append({'new_index_to_old': permutation.tolist(),
@@ -137,12 +181,17 @@ def reliability_control(data, pid, q, basis, variant, mode, bits, config, budget
 
 def evaluate_condition(data, pid, basis, variant, q, readout, p, config):
     budget = Budget(config['seconds_per_condition'], config['memory_gib'])
+    report_phase('load_graphs')
     graphs = [graph_at(data, 64 * pid + i) for i in range(2)]
     mode = 'exact' if all(is_regular(g) for g in graphs) else 'interval'
     precisions = [None] if mode == 'exact' else config['precision_bits']
     attempts = []
     for bits in precisions:
-        rows = [feature_matrix(g, q, 2, variant, basis, mode, bits or 128, budget) for g in graphs]
+        rows = []
+        for index, graph in enumerate(graphs):
+            report_phase('main_features', graph=index, arithmetic=mode, bits=bits)
+            rows.append(feature_matrix(graph, q, 2, variant, basis, mode, bits or 128, budget))
+        report_phase('main_readout', readout=readout, p=p, bits=bits)
         decision = decide(rows, readout, p, mode, budget, config)
         attempts.append({'bits': bits, 'status': decision['status'], 'reason': decision.get('reason')})
         if decision['status'] != UNRESOLVED:
@@ -156,10 +205,13 @@ def evaluate_condition(data, pid, basis, variant, q, readout, p, config):
 
 
 def experiment_settings(config):
+    readouts = config.get('readouts', ['multiset', 'mean'])
     for basis, variant, q in itertools.product(config['bases'], config['variants'], config['q_values']):
-        yield basis, variant, q, 'multiset', 1
-        for p in config['mean_p_values']:
-            yield basis, variant, q, 'mean', p
+        if 'multiset' in readouts:
+            yield basis, variant, q, 'multiset', 1
+        if 'mean' in readouts:
+            for p in config['mean_p_values']:
+                yield basis, variant, q, 'mean', p
 
 
 def condition_record(data, config, task):
@@ -178,11 +230,20 @@ def condition_record(data, config, task):
 
 def pending_conditions(data, ids, config, out, identity):
     sizes, regular = {}, {}
+    started = time.monotonic()
     for pid in ids:
         main = [graph_at(data, 64 * pid + i) for i in range(2)]
         controls = [graph_at(data, 64 * (pid + 400) + i) for i in range(2)]
+        # Verify the control path on every requested pair before any long task.
+        # Main pairs may be nonisomorphic and are never passed to this check.
+        try:
+            reliability_mapping(*controls)
+        except ValueError as exc:
+            raise ValueError(f'Reliability preflight failed for pair{pid:03d}: {exc}') from exc
         sizes[pid] = max(len(graph) for graph in main + controls)
         regular[pid] = all(is_regular(graph) for graph in main)
+    print(f'BREC preflight: {len(ids)} reliability pairs aligned and integer-verified '
+          f'in {time.monotonic() - started:.2f}s', flush=True)
     for basis, variant, q, readout, p in experiment_settings(config):
         width = q + 3 + (q * (q + 1) // 2 - 1 if variant == 'endpoint' else 0)
         for pid in ids:
@@ -261,7 +322,8 @@ def main(argv=None):
         try:
             run_tasks(tasks, partial(condition_record, data, config), out,
                       workers=workers, memory_gib=config['memory_gib'],
-                      reserve_gib=args.reserve_gib, seed=config['seed'])
+                      reserve_gib=args.reserve_gib, seed=config['seed'],
+                      reservation_scale=config.get('memory_reservation_scale', 1.0))
         finally:
             summarize(out, config)
 

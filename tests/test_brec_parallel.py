@@ -1,4 +1,6 @@
 """Regression checks for scheduling, resource limits and scientific parity."""
+import contextlib
+import io
 import json
 import multiprocessing
 import os
@@ -14,7 +16,8 @@ from unittest.mock import patch
 import networkx as nx
 import numpy as np
 
-from rebuttal_experiments.common import Budget, ResourceLimit, hard_wall_limit, sha256
+from rebuttal_experiments.common import Budget, ResourceLimit, atomic_json, hard_wall_limit, sha256
+from rebuttal_experiments.runtime import report_phase, report_to
 from rebuttal_experiments.scheduling import run_tasks
 from brec.reproducibility import snapshot
 
@@ -28,6 +31,7 @@ def example_task(index, estimated_bytes=192 * 2**20):
 
 def sleeping_worker(task):
     started = time.monotonic()
+    report_phase('test_sleep', step=1)
     time.sleep(0.3)
     return {**task['record'], 'status': 'certified_equal',
             'started': started, 'ended': time.monotonic(), 'pid': os.getpid()}
@@ -38,6 +42,51 @@ def crashing_worker(task):
 
 
 class ParallelSchedulingTests(unittest.TestCase):
+    def test_live_progress_exposes_busy_worker_phase_and_cleans_up(self):
+        snapshots = []
+
+        def capture(path, value):
+            atomic_json(path, value)
+            if path.name == 'progress.json':
+                snapshots.append(value)
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            output = io.StringIO()
+            with (patch('rebuttal_experiments.scheduling.HEARTBEAT_SECONDS', 0.02),
+                  patch('rebuttal_experiments.scheduling.atomic_json', side_effect=capture),
+                  contextlib.redirect_stdout(output)):
+                run_tasks([example_task(0)], sleeping_worker, out,
+                          workers=1, memory_gib=3, reserve_gib=0, seed=0)
+            busy = [row for snapshot in snapshots for row in snapshot['workers']
+                    if row['phase'] == 'test_sleep']
+            self.assertTrue(busy, snapshots)
+            self.assertEqual(busy[0]['details'], {'step': 1})
+            self.assertGreater(busy[0]['rss_bytes'], 0)
+            self.assertGreaterEqual(busy[0]['phase_elapsed_seconds'], 0)
+            self.assertIn('BREC heartbeat: active=1', output.getvalue())
+            self.assertIn('test_sleep', output.getvalue())
+            final = json.loads((out / 'progress.json').read_text())
+            self.assertEqual(final['status'], 'finished')
+            self.assertEqual(final['completed_this_session'], 1)
+            self.assertEqual(final['workers'], [])
+            self.assertFalse(list(out.glob('.brec-progress-*')))
+
+    def test_phase_report_context_is_restored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = [Path(directory) / name for name in ('first.json', 'second.json')]
+            report_phase('no_reporter')
+            with report_to(first):
+                report_phase('first', bits=128)
+                with report_to(second):
+                    report_phase('second', bits=512)
+                report_phase('first_restored')
+            before = first.read_bytes()
+            report_phase('no_reporter_again')
+            self.assertEqual(first.read_bytes(), before)
+            self.assertEqual(json.loads(first.read_text())['phase'], 'first_restored')
+            self.assertEqual(json.loads(second.read_text())['details'], {'bits': 512})
+
     def test_worker_crash_cannot_be_reported_as_success(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
@@ -45,6 +94,8 @@ class ParallelSchedulingTests(unittest.TestCase):
                 run_tasks([example_task(0)], crashing_worker, out,
                           workers=1, memory_gib=3, reserve_gib=0, seed=0)
             self.assertFalse((out / 'records' / 'task0.json').exists())
+            self.assertEqual(json.loads((out / 'progress.json').read_text())['status'], 'failed')
+            self.assertFalse(list(out.glob('.brec-progress-*')))
             self.assertEqual(multiprocessing.active_children(), [])
 
     def test_workers_overlap(self):
@@ -56,6 +107,18 @@ class ParallelSchedulingTests(unittest.TestCase):
             self.assertNotEqual(a['pid'], b['pid'])
             self.assertLess(max(a['started'], b['started']), min(a['ended'], b['ended']))
 
+    def test_calibrated_reservations_admit_more_workers_with_same_rss_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with patch('rebuttal_experiments.scheduling.process_rss',return_value=0):
+                run_tasks([example_task(i,3*2**28) for i in range(2)],sleeping_worker,out,
+                          workers=2,memory_gib=1,reserve_gib=0,seed=0,reservation_scale=0.6)
+            a,b = [json.loads((out/'records'/f'task{i}.json').read_text()) for i in range(2)]
+            self.assertLess(max(a['started'],b['started']),min(a['ended'],b['ended']))
+            progress = json.loads((out/'progress.json').read_text())
+            self.assertEqual(progress['memory_budget_bytes'],2**30)
+            self.assertEqual(progress['memory_reservation_scale'],0.6)
+
     def test_global_memory_watchdog(self):
         parent = os.getpid()
         with tempfile.TemporaryDirectory() as directory:
@@ -63,7 +126,7 @@ class ParallelSchedulingTests(unittest.TestCase):
             with patch('rebuttal_experiments.scheduling.process_rss',
                        side_effect=lambda pid: 0 if pid == parent else 2 * 2**30):
                 run_tasks([example_task(i) for i in range(2)], sleeping_worker, out,
-                          workers=2, memory_gib=1, reserve_gib=0, seed=0)
+                          workers=2, memory_gib=1, reserve_gib=0, seed=0,reservation_scale=0.6)
             for index in range(2):
                 record = json.loads((out / 'records' / f'task{index}.json').read_text())
                 self.assertEqual(record['status'], 'resource_limited')
@@ -87,11 +150,14 @@ class ParallelSchedulingTests(unittest.TestCase):
             original_sleep(seconds)
 
         with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
             with patch('rebuttal_experiments.scheduling.time.sleep', side_effect=interrupt_parent):
                 with self.assertRaises(KeyboardInterrupt):
-                    run_tasks([example_task(i) for i in range(2)], sleeping_worker, Path(directory),
+                    run_tasks([example_task(i) for i in range(2)], sleeping_worker, out,
                               workers=2, memory_gib=3, reserve_gib=0, seed=0)
             self.assertEqual(multiprocessing.active_children(), [])
+            self.assertEqual(json.loads((out / 'progress.json').read_text())['status'], 'interrupted')
+            self.assertFalse(list(out.glob('.brec-progress-*')))
 
     def test_unlimited_time_keeps_memory_limit(self):
         budget = Budget(None, 52)

@@ -1,0 +1,14 @@
+{
+  "expected_brec_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "q_values": [8, 16],
+  "bases": ["monomial", "chebyshev"],
+  "variants": ["baseline", "joint"],
+  "mean_p_values": [1, 2, 4, 8],
+  "relabels": 8,
+  "reliability_relabels": 2,
+  "control_triples": 16,
+  "seed": 20261112,
+  "memory_gib": 52,
+  "memory_reservation_scale": 0.6,
+  "seconds_per_condition": null
+}
