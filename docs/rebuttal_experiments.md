@@ -1,10 +1,10 @@
-# Rebuttal 补充实验：服务器运行说明
+# Supplementary rebuttal experiments: server run guide
 
-BREC／机制协议 `rebuttal-2026-11-12-v2`；TU使用 `gnnplus-gine-tu-structural-edge-v1`。代码按实验计算、运行流程和结果汇总组织；没有捆绑旧实验结果。`mechanisms`已在服务器完成：精确base／joint多重集比较及换基第三矩差1/331776与理论一致；完整BREC和蛋白质预测仍待执行。
+BREC and mechanism experiments use protocol `rebuttal-2026-11-12-v2`; TU uses `gnnplus-gine-tu-structural-edge-v1`. The code is organized around experiment computations, execution workflows, and result summaries. Previous experiment results are not bundled. `mechanisms` has completed on the server: the exact base/joint multiset comparisons and the third-moment difference of 1/331776 under a change of basis agree with theory. Full BREC and protein prediction runs remain pending.
 
-## 环境与输入
+## Environments and inputs
 
-BREC／精确机制实验在Linux、Python 3.12环境中，从本仓库根目录运行：
+Run BREC and exact mechanism experiments on Linux with Python 3.12, from this repository's root:
 
 ```bash
 python -m venv .venv-rebuttal
@@ -15,124 +15,124 @@ export REBUTTAL_OUT=outputs/rebuttal
 export BREC_FILE=/server/data/BREC/brec_v3.npy
 ```
 
-将输入路径换成真实位置。BREC 使用官方 51200 条 graph6 数组，SHA-256 固定在配置中。TU实验使用下文Co-Sparsify的原始环境和原始PyG loader，不在BREC环境中安装／运行；数据缺失时沿用原loader的下载行为。
+Replace the input paths with their actual locations. BREC uses the official array of 51,200 graph6 entries, with its SHA-256 pinned in the configuration. TU experiments use the original Co-Sparsify environment and PyG loader described below. Install and run them in that environment, separately from BREC; missing data is handled by the original loader's download behavior.
 
-每项默认写入新目录，拒绝覆盖。`--resume` 核对数据、配置、核心计算代码和环境，并保留已完成记录；仅删除停用的补充模块或整理运行入口不要求重算。原记录身份不改写，当前源码清单另记在运行manifest中。
+Each experiment writes to a new directory by default and refuses to overwrite existing output. `--resume` checks the data, configuration, core computation code, and environment while preserving completed records. Removing unused supplementary modules or reorganizing entry points alone does not require recomputation. Original record identities are preserved; the current source inventory is recorded separately in the run manifest.
 
-## 实验与命令
+## Experiments and commands
 
-| 实验 | 命令 | 回答的问题 |
+| Experiment | Command | Question addressed |
 |---|---|---|
-| 1. joint 与均值矩 | `mechanisms` | rook／Shrikhande 的原始区分与读出区分是否不同 |
-| 2. 换基与读出 | 同一个 `mechanisms` | Q=1、P=3 下，保留原始信息的换基能否改善均值矩 |
-| 3. BREC | `brec` | 用精确／区间计算确认二元编码的区分，保留未确定项 |
-| 4. 蛋白质预测 | `protein-run/report` | 相同输入宽度和训练预算下，joint 是否改变预测表现 |
+| 1. joint and mean moments | `mechanisms` | Whether raw-feature discrimination and readout discrimination differ for the rook/Shrikhande graphs |
+| 2. Change of basis and readouts | The same `mechanisms` command | Whether an information-preserving change of basis can improve mean-moment discrimination at Q=1, P=3 |
+| 3. BREC | `brec` | Certifying pair-encoding differences with exact/interval computations while retaining unresolved cases |
+| 4. Protein prediction | `protein-run/report` | Whether joint changes prediction performance at matching input widths and training budgets |
 
-分别运行所需实验，不自动启动全部任务：
+Run the experiments you need individually; these commands do not launch all tasks automatically:
 
 ```bash
 bash tools/run_rebuttal.sh mechanisms
 bash tools/run_rebuttal.sh brec
 ```
 
-## BREC 的计算与结果
+## BREC computations and results
 
-`configs/rebuttal/brec.json` 固定两个基、polynomial／endpoint、Q=2/4/8/16，以及完整多重集和累积均值矩 P=1/2/4，共 64 个二元设置。两图都正则时使用精确分数；其他条件从整数邻接矩阵生成 128→256→512 bit 区间。区间后端使用任意精度整数端点，不依赖 Arb，也不包裹已舍入的浮点特征。
+`configs/rebuttal/brec.json` fixes two bases, polynomial/endpoint encodings, Q=2/4/8/16, and full-multiset or cumulative mean-moment readouts with P=1/2/4, for 64 pair-domain settings. Exact fractions are used when both graphs are regular; other cases use 128→256→512-bit intervals generated from integer adjacency matrices. The interval backend uses arbitrary-precision integer endpoints, with no Arb dependency and no wrapping of already-rounded floating-point features.
 
-均值差区间排除 0 才报告区分；完整多重集用投影计数或兼容匹配缺口确认。区间重叠或存在兼容完美匹配不能证明相等，记录为未确定。每侧保留 8 次固定重标号、官方 reliability 对照及 2 次额外置换；图同构仅用于对齐已知同构对照，不参与主图对编码。
+Mean-moment discrimination is reported only when a difference interval excludes 0. Full-multiset differences are certified by projection counts or a compatible-matching deficit. Overlapping intervals or a compatible perfect matching do not prove equality and are recorded as unresolved. Each side retains 8 fixed relabelings, official reliability controls, and 2 additional permutations. Graph isomorphism is used only to align known isomorphic controls, not to encode the primary graph pairs.
 
-默认按可用 CPU 数并行运行独立条件，每个进程的数值库保持单线程；CPU 绑定复用原 `brec/schedule.py` 的物理核优先顺序。内存 `memory_gib: 52` 是调度器与所有工作进程的 RSS 总预算，调度器按任务预估内存准入并监控实际 RSS，同时保留默认 8 GiB 系统可用内存；共享页可能重复计入 RSS，统计偏保守。超出总预算时停止占用最大的未完成条件并记录 `resource_limited / scheduler_memory_limit`，不自动改变数值路径。结果逐条件原子保存，中断会清理工作进程，`--resume` 跳过已有记录并继续未完成条件。
+By default, independent conditions run in parallel according to the available CPU count, with single-threaded numerical libraries in each process. CPU affinity reuses the physical-core-first ordering in `brec/schedule.py`. The `memory_gib: 52` setting is the total RSS budget for the scheduler and all workers. The scheduler admits tasks based on estimated memory, monitors actual RSS, and reserves 8 GiB of available system memory by default. Shared pages may be counted more than once in RSS, making this accounting conservative. If the total budget is exceeded, the largest unfinished condition is stopped and recorded as `resource_limited / scheduler_memory_limit`; the numerical path is not changed automatically. Results are saved atomically per condition, interruptions clean up workers, and `--resume` skips existing records and continues unfinished conditions.
 
-不设每条件时间上限（`seconds_per_condition: null`），兼容匹配边上限仍为 200 万。需要限时时，将 `seconds_per_condition` 设为正数秒数。资源设置应在正式结果前按服务器能力固定；修改代码、配置或并发设置后使用新输出目录，已启动的进程继续使用启动时读取的设置。
+There is no per-condition time limit (`seconds_per_condition: null`); the compatible-matching edge limit remains 2 million. To impose a time limit, set `seconds_per_condition` to a positive number of seconds. Fix resource settings according to the server's capacity before producing formal results. Use a new output directory after changing the code, configuration, or concurrency settings. Processes already running continue to use the settings read at startup.
 
-例如限制最多 28 个进程，总内存预算仍为 52 GiB：
+For example, limit execution to 28 workers while retaining the total memory budget of 52 GiB:
 
 ```bash
 export REBUTTAL_OUT=outputs/rebuttal_parallel
 bash tools/run_rebuttal.sh brec --workers 28
-# 同一代码、配置和并发设置下续跑：
+# Resume with the same code, configuration, and concurrency settings:
 bash tools/run_rebuttal.sh brec --workers 28 --resume
 ```
 
-也可设置 `BREC_WORKERS=28`，适用于 `brec` 和 `brec-reproduce`。`--reserve-gib` 调整系统可用内存保留量。输出为：
+Alternatively, set `BREC_WORKERS=28` for either `brec` or `brec-reproduce`. Use `--reserve-gib` to adjust the amount of available system memory reserved. Outputs are:
 
-- `records/*.json`：设置、判别、精度尝试、重标号结果及 `evidence` 数值摘要。摘要包含区分通道与差值、计数界或匹配缺口，不再重复导出整份特征见证。
-- `summary.json`：每设置分母 400，分别列已确认区分、已确认相等、未确定、资源不足和未执行项。区分下界较大不自动证明真实表达力更强。
-- `manifest.json`：输入／代码／配置／环境身份及运行状态。
+- `records/*.json`: settings, discrimination decisions, precision attempts, relabeling results, and numerical `evidence` summaries. Summaries contain distinguishing channels and differences, count bounds, or matching deficits, without repeatedly exporting full feature witnesses.
+- `summary.json`: a denominator of 400 per setting, with separate counts for certified differences, certified equalities, unresolved cases, resource-limited cases, and unexecuted cases. A larger lower bound on detected differences does not by itself establish greater true expressive power.
+- `manifest.json`: input, code, configuration, and environment identities, plus run status.
 
-证据摘要用于解释结果，不是脱离输入即可独立验证的完整证书。新程序仍只覆盖二元 BREC，不覆盖完整三元／joint 或神经输出；`mechanisms` 的有限三元结果不能代替这些范围。
+Evidence summaries explain the results; they are not complete certificates that can be verified independently of the inputs. The new program covers only pair-domain BREC, not full triple/joint encodings or neural outputs. The finite triple results from `mechanisms` do not substitute for experiments in those scopes.
 
-所有 BREC 启动入口继续固定随机种子、数值库单线程及 PyTorch 严格确定性算法。历史神经 BREC 保留固定物理 batch、dtype 和 GPU 分配，不再按 OOM 自动切换计算路径。相同输入／配置／软件／硬件下的重复运行与重标号检查分别报告。
+All BREC entry points continue to fix random seeds, single-threaded numerical libraries, and strict PyTorch deterministic algorithms. The historical neural BREC workflow retains fixed physical batch sizes, dtype, and GPU assignments, with no automatic computation-path changes after out-of-memory errors. Repeated runs with the same inputs, configuration, software, and hardware are reported separately from relabeling checks.
 
-如需重复运行确认，以下命令会运行两次完整 BREC，再直接比较结果记录和证据摘要：
+To verify repeatability, the following command runs full BREC twice, then directly compares result records and evidence summaries:
 
 ```bash
 bash tools/run_rebuttal.sh brec-reproduce
-# 或比较已经分别完成的两份 v2 BREC 输出：
+# Or compare two separately completed v2 BREC outputs:
 python -m brec.reproducibility --first outputs/brec_run1 --second outputs/brec_run2 --out outputs/brec_repeat.json
 ```
 
-比对排除耗时；未完成或资源受限不能通过。`passed: true` 只表示所请求的二元 BREC 条件记录一致，不核查神经权重、不承诺跨平台一致，也不是任意重标号的数学证明。
+The comparison excludes elapsed time. Incomplete or resource-limited runs cannot pass. `passed: true` means only that records agree for the requested pair-domain BREC conditions. It does not check neural weights, guarantee agreement across platforms, or provide a mathematical proof for arbitrary relabelings.
 
-## 蛋白质预测
+## Protein prediction
 
-**Co-Sparsify数据／训练流程 + GNNPlus GINE模型。** 固定Co-Sparsify commit `505f6b50f019dc78edc88653d771667c0c561f5f`，沿用其TU loader、十折划分、Lightning训练、优化器、scheduler、val/acc选模和评估器。`protein_gnnplus.py`将原SPPGN1替换为`gnnplus_official`的`GINEConvLayer`（hidden 256、3层）和`SANGraphHead`（3层、mean pooling、ReLU、dropout 0）；`pair_x`按`(u,v)`映射到原始有向边，`loop_x`拼接到节点输入。两处上游官方文件均不修改。
+**Co-Sparsify data/training pipeline + GNNPlus GINE model.** Co-Sparsify is pinned to commit `505f6b50f019dc78edc88653d771667c0c561f5f`. Its TU loader, ten-fold splits, Lightning training, optimizer, scheduler, `val/acc` model selection, and evaluator are reused. `protein_gnnplus.py` replaces the original SPPGN1 with `GINEConvLayer` (hidden dimension 256, 3 layers) and `SANGraphHead` (3 layers, mean pooling, ReLU, dropout 0) from `gnnplus_official`. `pair_x` is mapped to the original directed edges by `(u,v)`, and `loop_x` is concatenated with the node inputs. The upstream files in both projects remain unchanged.
 
-来源：[运行入口](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/run_tud.py)、[TU配置](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/configs/sppgn/tud.sppgn1.poly.yaml)、[划分](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/datasets/kfold.py)、[训练器](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/lighting_interface/model.py)。
+Sources: [entry point](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/run_tud.py), [TU configuration](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/configs/sppgn/tud.sppgn1.poly.yaml), [splits](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/datasets/kfold.py), and [trainer](https://github.com/RongqinChen/Co-Sparsify/blob/505f6b50f019dc78edc88653d771667c0c561f5f/lighting_interface/model.py).
 
-| 项目 | 直接沿用的官方设置 |
+| Item | Official setting reused |
 |---|---|
-| 数据 | `PROTEINS_full`、`ENZYMES`；非cleaned版本。原PyG loader的连续node／edge attributes默认关闭，不额外加常数列或标准化 |
-| 划分 | 10折；缺少原10fold文件时StratifiedKFold(shuffle=True, random_state=42)，第r折使用原代码idx_list[r−1]；已有文件直接沿用并记录实际索引 |
-| 初始化 | 第r折seed=(r+1)×1000；不额外重复三种seed |
-| 网络 | GNNPlus GINE，3层，hidden 256，残差连接、dropout 0、mean pooling及3层SAN图头 |
-| 编码宽度 | 官方脚本的8、12、14、16；同一宽度下全部编码模型参数量一致 |
-| 训练 | 当前显式覆盖为物理batch 64；训练drop_last=True、AdamW、lr=0.001、weight_decay=0、100 epochs、5 warmup epochs、原cosine scheduler、norm梯度裁剪1.0 |
-| 选模 | 原val/acc最大；保留原评估器五位小数与原checkpoint并列处理，不改成NLL |
-| 最终评分 | 原脚本将同一个留出折同时作为validation和test；用户明确要求完全沿用。不称为独立test估计 |
-| 汇总 | 每个编码／宽度报告10折分数的均值与总体标准差(ddof=0)，沿用原字段test_acc等；保存raw logits与索引 |
-| 执行 | Co-Sparsify原GPU Trainer／8个torch线程／4周Timer；模型侧调用GNNPlus原生GINE层和SAN头，并将Comet切换为local_log |
+| Data | `PROTEINS_full` and `ENZYMES`, using the non-cleaned versions. Continuous node/edge attributes are disabled by default in the original PyG loader; no extra constant columns or normalization are added |
+| Splits | 10 folds; `StratifiedKFold(shuffle=True, random_state=42)` when the original `10fold` file is absent. Fold r uses the original code's `idx_list[r−1]`. Existing files are reused directly, and actual indices are recorded |
+| Initialization | Fold r uses seed=(r+1)×1000; no additional repetitions with three seeds |
+| Network | GNNPlus GINE, 3 layers, hidden dimension 256, residual connections, dropout 0, mean pooling, and a 3-layer SAN graph head |
+| Encoding widths | 8, 12, 14, and 16 from the official script; all encoding models have the same parameter count at a given width |
+| Training | Physical batch size explicitly overridden to 64; training uses `drop_last=True`, AdamW, lr=0.001, weight_decay=0, 100 epochs, 5 warmup epochs, the original cosine scheduler, and norm gradient clipping at 1.0 |
+| Model selection | Maximum original `val/acc`; the evaluator's five-decimal rounding and original checkpoint tie handling are preserved, without switching to NLL |
+| Final scoring | The original script uses the same held-out fold for validation and test, as explicitly requested by the user. This is not reported as an independent test estimate |
+| Aggregation | Mean and population standard deviation (ddof=0) of the 10 fold scores for each encoding/width, retaining original fields such as `test_acc`; raw logits and indices are saved |
+| Execution | Original Co-Sparsify GPU Trainer, 8 torch threads, and a 4-week Timer; the model calls native GNNPlus GINE layers and the SAN head, and Comet is replaced by `local_log` |
 
-配置中的min_lr=1e-6由原scheduler按原代码解释，不另写一个学习率实现。物理batch及drop_last由原DataLoader处理，不用逐图梯度累积模拟。`configs/rebuttal/protein.json`显式设置`batch_size_override: 64`；该值写入每次manifest和记录。GNNPlus模型不需要SPPGN1专用的`2fwl_connsp`三元索引，因此该变换在此后端下为恒等变换；全部结构编码仍在poly变换的`pair_x`／`loop_x`中生成。
+The original scheduler interprets min_lr=1e-6 according to its own code; no separate learning-rate implementation is introduced. The original DataLoader handles physical batches and `drop_last`, without simulating them through per-graph gradient accumulation. `configs/rebuttal/protein.json` explicitly sets `batch_size_override: 64`, which is written to every run manifest and record. The GNNPlus model does not require SPPGN1-specific `2fwl_connsp` triple indices, so that transform is the identity for this backend. All structural encodings are still generated in the poly transform's `pair_x`/`loop_x` fields.
 
-### 九组编码
+### Nine encoding groups
 
-令宽度K，r=⌊K/2⌋，e=⌊(K−r)/2⌋，j=K−r−e。对K=8／12／14／16，(r,e,j)分别为(4,2,2)、(6,3,3)、(7,3,4)、(8,4,4)。M为对称归一化邻接，B_q=M^q，h_q=B_q 1。
+For width K, let r=⌊K/2⌋, e=⌊(K−r)/2⌋, and j=K−r−e. For K=8/12/14/16, (r,e,j) is (4,2,2), (6,3,3), (7,3,4), and (8,4,4), respectively. M is the symmetrically normalized adjacency matrix, B_q=M^q, and h_q=B_q 1.
 
-| 设置 | GNNPlus GINE收到的K维编码 |
+| Setting | K-dimensional encoding received by GNNPlus GINE |
 |---|---|
-| `rrwp` | 原生Co-Sparsify RRWP，I,P,…,P^(K−1)，P为行归一化邻接；基线完全走原变换 |
-| `mono` | 原生I,M,…,M^(K−1) |
-| `cheb` | 原生完整Chebyshev基；与mono同次数空间 |
-| `none` | K个零槽；模型和原生节点／边输入不变 |
-| `base` | 前r个monomial通道，余下补零 |
-| `endpoint` | base＋前e个[h₁(u),h₁(v),h₂(u),h₂(v)]，余下j槽补零 |
-| `powers` | endpoint＋前j个已保留B_q(u,v)的逐元素平方；不增加该编码的原始信息 |
-| `joint` | endpoint＋J₁,…,Jⱼ，保留endpoint所有槽 |
-| `joint_mix` | joint的完整K维正交DCT换基，不截断、不增加原始信息 |
+| `rrwp` | Native Co-Sparsify RRWP, I,P,…,P^(K−1), where P is the row-normalized adjacency matrix; the baseline uses the original transform throughout |
+| `mono` | Native I,M,…,M^(K−1) |
+| `cheb` | Native full Chebyshev basis spanning the same polynomial degree space as mono |
+| `none` | K zero slots; the model and native node/edge inputs are unchanged |
+| `base` | First r monomial channels, with the remaining slots zero-padded |
+| `endpoint` | base plus the first e entries of [h₁(u),h₁(v),h₂(u),h₂(v)], with the remaining j slots zero-padded |
+| `powers` | endpoint plus the first j elementwise squares of retained B_q(u,v) channels; adds no raw information to this encoding |
+| `joint` | endpoint plus J₁,…,Jⱼ, retaining all endpoint slots |
+| `joint_mix` | Full K-dimensional orthogonal DCT change of basis of joint, without truncation or additional raw information |
 
-新增的joint点对通道由固定三元读出得到：
+The additional joint pair channels are obtained through a fixed triple readout:
 
 \[
 J_q(u,v)=A_{uv}\sum_w A_{uw}A_{vw}\sum_t B_q(u,t)B_q(v,t)B_q(w,t).
 \]
 
-内层是三元共享pivot构造，外层用三角形条件作固定读出，接入原点对接口，不加可训练模块。无自环图上J₁涉及四个两两相连的不同顶点，保留一种4-clique相关信号；它不是原完整三元特征多重集，也不声称完整3-FWL等价。程序一次只持有一个局部平面，不保存全n³缓存。所有新编码沿用原变换的float32接口；不新增特征标准化。
+The inner sum is a triple shared-pivot construction; the outer sum uses a triangle condition for a fixed readout through the original pair interface, with no additional trainable modules. On graphs without self-loops, J₁ involves four distinct, pairwise adjacent vertices and retains a signal related to 4-cliques. It is not the original full multiset of triple features, and no equivalence to full 3-FWL is claimed. The program holds only one local plane at a time, without storing a full n³ cache. All new encodings retain the original transform's float32 interface; no feature normalization is added.
 
-主比较为同K的`joint − endpoint`，另报告与`powers`、原生`mono`等的预设比较。joint对endpoint有明确保留关系；joint与完整mono在相同K下交换了通道预算，不预设一般支配。`cheb/mono`和`joint_mix/joint`分别控制相同信息的表示方式。全部配置都报告，不再生成“逐折选最好编码后的独立test结果”。
+The primary comparison is `joint − endpoint` at matching K, with additional prespecified comparisons against `powers`, native `mono`, and other settings. joint explicitly retains endpoint. At the same K, joint and full mono allocate their channel budgets differently, so general dominance is not assumed. `cheb/mono` and `joint_mix/joint` each control for different representations of the same information. All configurations are reported; no "independent test results after selecting the best encoding per fold" are generated.
 
-### 服务器运行
+### Running on the server
 
-使用Co-Sparsify原环境，按其readme的mamba／Sage／PyG及CUDA扩展说明准备；参考环境是Python 3.11、NumPy 1.26、PyTorch 2.2.2/CUDA 12.1。不要将BREC的NumPy 2.4环境依赖装进此环境。适配器无需超出原仓库的新包。
+Use the original Co-Sparsify environment, following its README instructions for mamba, Sage, PyG, and CUDA extensions. The reference environment uses Python 3.11, NumPy 1.26, and PyTorch 2.2.2/CUDA 12.1. Keep the BREC NumPy 2.4 dependencies out of this environment. The adapter requires no packages beyond those in the original repository.
 
-若服务器尚无原仓库，先准备固定版本（已有checkout直接复用）：
+If the original repository is not yet on the server, prepare the pinned version first; reuse an existing checkout when available:
 
 ```bash
 git clone https://github.com/RongqinChen/Co-Sparsify.git Co-Sparsify
 git -C Co-Sparsify checkout 505f6b50f019dc78edc88653d771667c0c561f5f
 ```
 
-然后从本复现仓库根目录运行：
+Then run from this reproducibility repository's root:
 
 ```bash
 mamba activate gnn222
@@ -140,18 +140,18 @@ export TU_DATA_ROOT=/server/data/TUD
 CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-both 2>&1 | tee cosparsify_tu.log
 ```
 
-原loader缺数据时按原流程下载，无额外`--download`。固定两数据集×9编码×4宽度×10折，**共720次原生训练**，每数据集360次。当前物理batch固定为配置中的8，不自动继续减batch、改精度、换模型或丢图来规避其他失败。
+The original loader downloads missing data through its usual workflow; no additional `--download` flag is needed. The fixed matrix is 2 datasets × 9 encodings × 4 widths × 10 folds: **720 native training runs** in total, 360 per dataset. The physical batch size is fixed at 64 in the current configuration. The runner does not automatically reduce the batch size, change precision, replace the model, or drop graphs to work around other failures.
 
-也可先运行完整矩阵中的少量正式条件，后续继续原目录而不重跑已完成项：
+You can also start with a small subset of formal conditions from the full matrix, then continue in the same directory without rerunning completed conditions:
 
 ```bash
 PROTEIN_DATASET=ENZYMES CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-run --encodings rrwp --poly-dims 8 --folds 0
-# 同数据集继续填齐剩余条件：
+# Continue with the remaining conditions for the same dataset:
 PROTEIN_DATASET=ENZYMES CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-run
 PROTEIN_DATASET=ENZYMES bash tools/run_rebuttal.sh protein-report
 ```
 
-需要后台跑完整矩阵时，使用按“编码×宽度”隔离的分片调度器。它会先用同一原生环境预热两份TU数据，再把每个数据集拆成36个shard，固定上界内分配到4张GPU，全部shard完成后校验并合并10折报告：
+To run the full matrix in the background, use the shard scheduler with separate encoding × width shards. It first warms up both TU datasets in the same native environment, then divides each dataset into 36 shards and assigns them to 4 GPUs within a fixed concurrency limit. Once all shards finish, it validates and merges the ten-fold reports:
 
 ```bash
 python tools/run_protein_grid.py \
@@ -163,7 +163,7 @@ python tools/run_protein_grid.py \
   --workers-per-gpu 1
 ```
 
-`--workers-per-gpu` 默认1；只有实测原模型显存和主机内存允许时再增加。省略 `--resume` 会拒绝覆盖已有输出，续跑时加上该参数。可先运行 `--dry-run` 检查得到72个shard／720次原生训练的计划。后台启动示例：
+`--workers-per-gpu` defaults to 1; increase it only after measuring the original model's GPU and host memory requirements. Without `--resume`, existing output will not be overwritten; add the flag when continuing a run. Use `--dry-run` first to inspect the plan for 72 shards / 720 native training runs. Example background launch:
 
 ```bash
 nohup setsid python tools/run_protein_grid.py \
@@ -172,23 +172,23 @@ nohup setsid python tools/run_protein_grid.py \
   --gpus 0 1 2 3 > cosparsify_tu_grid.log 2>&1 < /dev/null &
 ```
 
-该运行器的进度写入输出根目录的`run_status.json`；每个shard仍调用原有`protein run`，不复制或改写Co-Sparsify训练流程。最终`protein report --shards`会拒绝不同identity、重复记录、缺失组合或checksum不匹配的产物。
+The runner writes progress to `run_status.json` in the output root. Each shard still calls the existing `protein run` entry point, without copying or rewriting the Co-Sparsify training pipeline. The final `protein report --shards` rejects artifacts with mismatched identities, duplicate records, missing combinations, or checksum mismatches.
 
-`--reference-root`可指定另一处相同、未修改的官方checkout。每个新TU目录为`$REBUTTAL_OUT/cosparsify_tu/数据集名/`；含`records/`、`predictions/`、`native/`原checkpoint／本地日志，以及最终`protein_report.json`。日志保留原预处理耗时输出；JSON保留原avg_train_time_epoch等指标。旧27／64槽自定义模型结果单独保留，不混入此次比较。
+Use `--reference-root` to specify another identical, unmodified official checkout. Each new TU directory is `$REBUTTAL_OUT/cosparsify_tu/<dataset_name>/`, containing `records/`, `predictions/`, original checkpoints and local logs under `native/`, and the final `protein_report.json`. Logs retain the original preprocessing-time output; JSON retains original metrics such as `avg_train_time_epoch`. Earlier custom-model results with 27/64 slots are kept separately and excluded from this comparison.
 
-完成项先核对实验身份及产物后跳过；完整汇总再核对各编码记录中的实际数据、索引、初始化、模型参数量和原设置一致。改变请求的编码／宽度／折子集不改变实验身份，允许分批继续同一矩阵。删去旧自定义loader／model／trainer后不生成归档；BREC／机制代码不改，不要求重跑。
+Completed conditions are skipped only after their experiment identities and artifacts have been checked. Full aggregation then checks that actual data, indices, initialization, model parameter counts, and original settings agree across encoding records. Changing the requested subset of encodings, widths, or folds does not change the experiment identity, allowing the same matrix to be completed in batches. Removing the old custom loader/model/trainer does not generate an archive; BREC and mechanism code is unchanged and does not require rerunning.
 
-## 代码阅读顺序
+## Code reading order
 
-- BREC：`brec.py` 组织运行，`scheduling.py` 并行调度，`encodings.py` 生成通道，`readouts.py` 作判别。
-- TU：`protein.py`调用原始入口并保存来源及结果，`protein_encodings.py`只替换编码，`protein_report.py`汇总原始评分；模型、loader和训练器均来自外部Co-Sparsify checkout。
+- BREC: `brec.py` orchestrates runs, `scheduling.py` schedules parallel tasks, `encodings.py` generates channels, and `readouts.py` performs discrimination.
+- TU: `protein.py` calls the original entry point and saves provenance and results, `protein_encodings.py` replaces only the encodings, and `protein_report.py` summarizes original scores. The model, loader, and trainer are sourced from the external Co-Sparsify checkout.
 
-每次运行的 `manifest.json` 记录配置、输入、代码和环境身份。仓库不再保留旧结果表、静态源码清单或归档导出工具。
+Each run's `manifest.json` records configuration, input, code, and environment identities. The repository no longer retains old result tables, static source inventories, or archive export tools.
 
-## BREC 代码验证
+## BREC code validation
 
 ```bash
 python -m unittest discover -s tests -p 'test_brec_*.py' -v
 ```
 
-测试覆盖区间运算的精确包络、独立分数公式、两种基与全部默认 Q 预算、累积均值矩、三元提升、重复行匹配、非自逆重标号、官方 reliability 映射、并行与重复运行一致性、内存限制、中断清理、原子保存及续跑身份。配置错误在启动工作进程前拒绝；复现检查同时核对条件覆盖、记录身份和汇总一致性。这些测试使用小图，不替代正式 BREC 全部条件的运行与结果审查。
+Tests cover rigorous interval enclosures, independent fraction formulas, both bases and all default Q budgets, cumulative mean moments, triple lifts, repeated-row matching, non-self-inverse relabelings, the official reliability mapping, parallel and repeated-run consistency, memory limits, interruption cleanup, atomic saving, and resume identities. Configuration errors are rejected before workers start. Reproducibility checks also verify condition coverage, record identities, and summary consistency. These tests use small graphs and do not replace running and reviewing all formal BREC conditions.

@@ -1,29 +1,29 @@
-# 计算协议与实现
+# Computational protocols and implementation
 
-| 实验 | 主要代码 | 数值和读出 |
+| Experiment | Main code | Numerics and readouts |
 |---|---|---|
-| 精确机制对照 | `rebuttal_experiments/mechanisms.py` | Q=1 的完整有序三元组；精确分数；多重集和均值矩 |
-| 补充 BREC | `rebuttal_experiments/brec.py` | 完整二元域；正则图用分数，其他图用区间；多重集或均值矩 |
-| TU预测 | `protein.py`、`protein_encodings.py`、`protein_gnnplus.py` | Co-Sparsify数据／十折训练，GNNPlus GINE接收loop／pair结构通道 |
-| PPGN | `brec/ppgn_models.py`、`ppgn_realization.py` | 指定的对称幂输入、pair/triple backbone 和神经读出 |
-| 更多对象区分任务 | `discriminability/` | 指定宽度、轨道／FWL 参考、共同方向比较和 MIS |
+| Exact mechanism controls | `rebuttal_experiments/mechanisms.py` | All ordered triples at Q=1; exact fractions; multisets and mean moments |
+| Supplementary BREC | `rebuttal_experiments/brec.py` | Full pair domain; fractions for regular graphs and intervals otherwise; multisets or mean moments |
+| TU prediction | `protein.py`, `protein_encodings.py`, `protein_gnnplus.py` | Co-Sparsify data and ten-fold training; GNNPlus GINE receives structural loop/pair channels |
+| PPGN | `brec/ppgn_models.py`, `ppgn_realization.py` | Specified symmetric matrix-power inputs, pair/triple backbones, and neural readouts |
+| Additional object discrimination tasks | `discriminability/` | Specified widths, orbit/FWL references, comparisons with a shared orientation, and MIS |
 
-## 补充实验的共同范围
+## Shared scope of the supplementary experiments
 
-- 完整多重集保留各行出现次数。区间重叠不能证明精确相等；兼容匹配不存在才能确认多重集不同。
-- BREC 的未确定、资源受限和未执行项留在分母中；检出下界较大不自动证明真实表达力更强。
-- 对象域使用跨通道一致的方向交换，不逐通道独立挑方向。MIS 最优只说明数值相似图求解完成，不认证结构特征的真实值。
+- Full multisets retain row multiplicities. Overlapping intervals do not prove exact equality; absence of a compatible matching certifies a multiset difference.
+- Unresolved, resource-limited, and unexecuted BREC cases remain in the denominator. A larger lower bound on detected differences does not by itself establish greater true expressive power.
+- Object domains use the same orientation swap across all channels, rather than selecting orientations independently per channel. MIS optimality certifies that the numerical similarity graph has been solved, not that the true structural feature values have been certified.
 
-- TU使用Co-Sparsify commit 505f6b50f019dc78edc88653d771667c0c561f5f的数据、十折训练、优化器和评估器；PROTEINS_full与ENZYMES、9编码、宽度8/12/14/16、10折，共720次训练。骨干替换为`gnnplus_official`的GINE（hidden 256、3层）、SAN图头和mean pooling，pair_x映射到原始有向边、loop_x拼入节点输入。物理batch显式设为64。
-- 同一留出折用于checkpoint选择和最终评分；按用户明确指示不另设独立test，均值及总体标准差按原10折口径报告。只改编码变换并额外保存本地记录，不用此前自定义GNN、64槽或独立test流程。
-- joint用三元共享pivot的固定点对读出，通过原pair_x／loop_x接入，不加可训练模块。joint保留endpoint；powers是已有通道的逐元素平方；joint_mix是完整可逆通道换基。有限读出不等同于完整三元字典或完整3-FWL。
+- TU uses the data, ten-fold training, optimizer, and evaluator from Co-Sparsify commit `505f6b50f019dc78edc88653d771667c0c561f5f`: PROTEINS_full and ENZYMES, 9 encodings, widths 8/12/14/16, and 10 folds, for 720 training runs. The backbone is replaced by GINE from `gnnplus_official` (hidden dimension 256, 3 layers), a SAN graph head, and mean pooling. `pair_x` is mapped to the original directed edges, and `loop_x` is concatenated with the node inputs. The physical batch size is explicitly set to 64.
+- The same held-out fold is used for checkpoint selection and final scoring, with no separate independent test split, as explicitly requested by the user. Means and population standard deviations follow the original ten-fold reporting convention. The adapter replaces the encoding transform and adds local records; it does not use the earlier custom GNN, 64-slot setup, or independent-test pipeline.
+- `joint` uses a fixed pair readout of a triple shared-pivot construction, connected through the original `pair_x`/`loop_x` interface without adding trainable modules. `joint` retains `endpoint`; `powers` contains elementwise squares of existing channels; `joint_mix` applies a full invertible change of channel basis. This finite readout is not equivalent to the full triple dictionary or full 3-FWL.
 
-## PPGN 输入和模型
+## PPGN inputs and model
 
-`FixedInput.array` 构造 I,S,…,S⁸，其中 S=D⁻¹ᐟ²AD⁻¹ᐟ²。三元输入拼接 (u,v)、(u,w)、(v,w) 三个平面；输入本身没有共享 pivot 操作。它不同于包含六个有序坐标提升的固定编码字典。
+`FixedInput.array` constructs I,S,…,S⁸, where S=D⁻¹ᐟ²AD⁻¹ᐟ². Triple inputs concatenate the (u,v), (u,w), and (v,w) planes; the input itself has no shared-pivot operation. This differs from the fixed encoding dictionary containing all six ordered coordinate lifts.
 
-模型每层对各分支作仿射映射；pair 分支矩阵相乘，triple 分支收缩共同 pivot；随后作指定有符号根变换、拼接、仿射投影和 BatchNorm。图读出使用代码中定义的对角及边际统计。准确设置以 `configs/ppgn_protocol.json` 为准。
+Each model layer applies affine maps to its branches. Pair branches use matrix multiplication, and triple branches contract over a shared pivot. These operations are followed by the specified signed-root transform, concatenation, affine projection, and BatchNorm. Graph readouts use the diagonal and marginal statistics defined in the code. See `configs/ppgn_protocol.json` for the exact settings.
 
-## 确定性与重标号
+## Determinism and relabeling
 
-`brec/determinism.py` 只作用于 BREC，固定数值库线程、随机种子和 PyTorch 严格确定性策略。相同顺序输入的重复运行一致，不等于换编号后仍一致；浮点结果也不能直接作为精确表达力证据。补充 BREC 单独保留同图重标号及官方 reliability 对照，其范围见[运行说明](rebuttal_experiments.md)。
+`brec/determinism.py` applies only to BREC and fixes numerical-library thread counts, random seeds, and PyTorch's strict deterministic policy. Agreement across repeated runs with the same input ordering does not imply agreement after relabeling. Floating-point results also do not directly establish exact expressive power. Supplementary BREC separately retains same-graph relabeling and official reliability controls; see the [run guide](rebuttal_experiments.md) for their scope.
