@@ -26,8 +26,15 @@ def snapshot(root):
         raise ValueError('Empty or duplicate configured conditions')
     expected = {}
     grouped = {}
+    readouts = config.get('readouts', ['multiset', 'mean'])
+    if (not isinstance(readouts, list) or not readouts or
+            any(r not in ('multiset', 'mean') for r in readouts) or len(set(readouts)) != len(readouts)):
+        raise ValueError('Invalid configured readouts')
+    conditions = ([('multiset', 1)] if 'multiset' in readouts else [])
+    if 'mean' in readouts:
+        conditions += [('mean', p) for p in config['mean_p_values']]
     for basis, variant, q in itertools.product(config['bases'], config['variants'], config['q_values']):
-        for readout, p in [('multiset', 1), *(('mean', p) for p in config['mean_p_values'])]:
+        for readout, p in conditions:
             stem = f'{basis}_{variant}_q{q}_{readout}_p{p}'
             grouped[stem] = Counter()
             for pid in config['executed_pair_ids']:

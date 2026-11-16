@@ -50,12 +50,26 @@ def matmul(left, right, budget=None):
         budget.check()
     if left.dtype != object:
         return left @ right
-    # Chunk object matrix products so the resource budget is checked regularly.
+    if left.size == 0 or right.size == 0:
+        return left @ right
+    # Normalized adjacency is sparse. Object matmul otherwise constructs an
+    # Interval/Fraction product even for every exact zero. Omit only exact-zero
+    # factors; products and endpoint sums for the remaining terms are unchanged.
     result = np.empty((left.shape[0], right.shape[1]), dtype=object)
     for start in range(0, left.shape[0], 4):
         if budget:
             budget.check()
-        result[start:start + 4] = left[start:start + 4] @ right
+        for i in range(start, min(start + 4, left.shape[0])):
+            row = left[i]
+            nonzero = [k for k, value in enumerate(row)
+                       if not (value.lo == value.hi == 0 if isinstance(value, Interval)
+                               else value == 0)]
+            if not nonzero:
+                result[i] = row[0] * right[0, 0]
+            elif len(nonzero) < len(row) // 2:
+                result[i] = row[nonzero] @ right[nonzero]
+            else:
+                result[i] = row @ right
     return result
 
 

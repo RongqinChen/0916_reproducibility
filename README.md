@@ -9,6 +9,10 @@ See the [supplementary experiment guide](docs/rebuttal_experiments.md) for envir
 ```bash
 bash tools/run_rebuttal.sh mechanisms
 bash tools/run_rebuttal.sh brec
+bash tools/run_rebuttal.sh triple-encodings
+bash tools/run_rebuttal.sh budget-extend
+bash tools/run_rebuttal.sh triple-ppgn
+bash tools/run_rebuttal.sh objects
 
 CUDA_VISIBLE_DEVICES=0 bash tools/run_rebuttal.sh protein-both
 ```
