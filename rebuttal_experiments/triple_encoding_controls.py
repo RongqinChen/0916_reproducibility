@@ -1,11 +1,12 @@
 """Exact bank alignment and sampled full-row relabeling controls."""
 from __future__ import annotations
 
+from functools import partial
 import random
 
 import numpy as np
 
-from .brec import graph_at, reliability_mapping
+from .brec_data import OFFICIAL_RELIABILITY, official_reliability_pairs, reliability_mapping
 from .common import permutations
 from .encodings import descriptors
 from .runtime import report_phase
@@ -28,32 +29,49 @@ def aligned_kernel_control(original, changed, mapping, samples, keys):
             'sampled_triples': len(samples), 'channels_per_sample': len(keys)}
 
 
+def sample_triples(n, seed, count):
+    indices = random.Random(seed).sample(range(n**3), min(count, n**3))
+    return [tuple(map(int, np.unravel_index(index, (n, n, n)))) for index in indices]
+
+
 def controls(data,pid,kernels,q,basis,config,budget):
+    make_kernel = partial(TripleKernel, q=q, basis=basis, budget=budget,
+                          bank_cache=config.get('bank_cache'))
     keys = descriptors(q,3,'joint')
-    n = kernels[0].n
-    rng = random.Random(config['seed']+pid)
-    indices = rng.sample(range(n**3),min(config['control_triples'],n**3))
-    samples = [tuple(map(int,np.unravel_index(index,(n,n,n)))) for index in indices]
     result = []
-    for graph_index,original in enumerate(kernels):
-        for index,permutation in enumerate(permutations(n,config['relabels'],
-                                              config['seed']+1009*pid+graph_index)):
-            budget.check()
-            report_phase('triple_relabel_control',q=q,basis=basis,graph=graph_index,relabel=index+1)
-            changed = TripleKernel(original.adjacency[np.ix_(permutation,permutation)],q,basis,budget)
-            result.append({'graph':graph_index,'new_to_old':permutation.tolist(),
-                           **aligned_kernel_control(original,changed,np.argsort(permutation),samples,keys)})
-    graphs = [graph_at(data,64*(pid+400)+i) for i in (0,1)]
-    mapping = reliability_mapping(*graphs)
-    original,changed = [TripleKernel(graph,q,basis,budget) for graph in graphs]
-    report_phase('triple_reliability_control',q=q,basis=basis)
-    result.append({'official_reliability':True,'old_to_new':mapping.tolist(),
-                   **aligned_kernel_control(original,changed,mapping,samples,keys)})
-    for index,permutation in enumerate(permutations(n,config['reliability_relabels'],
-                                                   config['seed']+7919*pid)):
+    seed = config['seed']
+    count = config['control_triples']
+    if config.get('relabels', 0):
+        for graph_index,original in enumerate(kernels):
+            samples = sample_triples(original.n, seed + pid, count)
+            for index,permutation in enumerate(permutations(original.n, config['relabels'],
+                                                            seed + 1009 * pid + graph_index)):
+                budget.check()
+                report_phase('triple_relabel_control',q=q,basis=basis,graph=graph_index,relabel=index+1)
+                changed = make_kernel(original.adjacency[np.ix_(permutation,permutation)])
+                result.append({'graph':graph_index,'new_to_old':permutation.tolist(),
+                               **aligned_kernel_control(original,changed,np.argsort(permutation),samples,keys)})
+                del changed
+    extra = config.get('reliability_relabels', 0)
+    for indices, graphs in official_reliability_pairs(data, pid, config):
         budget.check()
-        report_phase('triple_reliability_relabel',q=q,basis=basis,relabel=index+1)
-        changed = TripleKernel(original.adjacency[np.ix_(permutation,permutation)],q,basis,budget)
-        result.append({'reliability_relabel':index+1,'new_to_old':permutation.tolist(),
-                       **aligned_kernel_control(original,changed,np.argsort(permutation),samples,keys)})
+        report_phase('triple_reliability_control',q=q,basis=basis,dataset_indices=indices)
+        mapping = reliability_mapping(*graphs)
+        original,changed = [make_kernel(graph) for graph in graphs]
+        samples = sample_triples(original.n, seed + pid, count)
+        control = {'official_reliability': True, 'old_to_new': mapping.tolist(),
+                   **aligned_kernel_control(original,changed,mapping,samples,keys)}
+        if config.get('reliability_protocol') == OFFICIAL_RELIABILITY:
+            control['dataset_indices'] = list(indices)
+        result.append(control)
+        del changed
+        permutations_to_check = permutations(original.n, extra, seed + 7919 * pid) if extra else ()
+        for index,permutation in enumerate(permutations_to_check):
+            budget.check()
+            report_phase('triple_reliability_relabel',q=q,basis=basis,relabel=index+1)
+            changed = make_kernel(original.adjacency[np.ix_(permutation,permutation)])
+            result.append({'reliability_relabel':index+1,'new_to_old':permutation.tolist(),
+                           **aligned_kernel_control(original,changed,np.argsort(permutation),samples,keys)})
+            del changed
+        del original
     return result

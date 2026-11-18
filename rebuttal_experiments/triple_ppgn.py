@@ -18,7 +18,7 @@ from brec.determinism import prepare_environment, child_environment, ensure_star
 prepare_environment()
 import psutil
 
-from .brec import graph_at, load_brec_data
+from .brec_data import graph_at, load_brec_data
 from .common import (ResourceLimit, atomic_json, configuration, run_directory, sha256)
 from .scheduling import ordered_cpus
 from .triple_ppgn_inputs import VARIANTS

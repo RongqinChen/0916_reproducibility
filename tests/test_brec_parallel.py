@@ -17,6 +17,8 @@ import networkx as nx
 import numpy as np
 
 from rebuttal_experiments.common import Budget, ResourceLimit, atomic_json, hard_wall_limit, sha256
+from rebuttal_experiments.brec import evaluate_budgets, evaluate_condition
+from rebuttal_experiments.encodings import feature_matrix
 from rebuttal_experiments.runtime import report_phase, report_to
 from rebuttal_experiments.scheduling import run_tasks
 from brec.reproducibility import snapshot
@@ -41,7 +43,21 @@ def crashing_worker(task):
     os._exit(7)
 
 
+def device_worker(task):
+    return {**sleeping_worker(task), 'device': task['device']}
+
+
 class ParallelSchedulingTests(unittest.TestCase):
+    def test_four_devices_receive_overlapping_jobs(self):
+        devices = ['cuda:0', 'cuda:1', 'cuda:2', 'cuda:3']
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            run_tasks([example_task(i) for i in range(4)], device_worker, out, workers=4,
+                      memory_gib=3, reserve_gib=0, seed=0, devices=devices)
+            rows = [json.loads((out/'records'/f'task{i}.json').read_text()) for i in range(4)]
+            self.assertEqual([row['device'] for row in rows], devices)
+            self.assertLess(max(row['started'] for row in rows), min(row['ended'] for row in rows))
+
     def test_live_progress_exposes_busy_worker_phase_and_cleans_up(self):
         snapshots = []
 
@@ -173,6 +189,32 @@ class ParallelSchedulingTests(unittest.TestCase):
 
 
 class ScientificParityTests(unittest.TestCase):
+    def test_grouped_evaluation_preserves_each_readouts_stopping_precision(self):
+        path = nx.to_graph6_bytes(nx.path_graph(4), header=False).strip()
+        star = nx.to_graph6_bytes(nx.star_graph(3), header=False).strip()
+        data = np.full(51200, path, dtype='S16')
+        data[1] = star
+        config = {'seconds_per_condition': None, 'memory_gib': 3,
+                  'precision_bits': [2, 8, 128], 'max_candidate_edges': 1000,
+                  'seed': 0, 'relabels': 1, 'reliability_relabels': 1}
+        arguments = (data, 0, 'chebyshev', 'endpoint')
+        settings = [(q, readout, p) for q in (2, 4)
+                    for readout, p in [('mean', 4), ('multiset', 1), ('mean', 1), ('mean', 2)]]
+
+        with patch('rebuttal_experiments.brec.feature_matrix', wraps=feature_matrix) as features:
+            grouped = dict(evaluate_budgets(*arguments, settings, config))
+            # Two distinct stopping precisions. Each needs two main features,
+            # two main relabels, two reliability graphs and one reliability relabel.
+            self.assertEqual(features.call_count, 14)
+            self.assertEqual({call.args[1] for call in features.call_args_list}, {4})
+        for q, readout, p in settings:
+            independent = evaluate_condition(*arguments, q, readout, p, config)
+            shared = grouped[q, readout, p]
+            del independent['elapsed_seconds'], shared['elapsed_seconds']
+            self.assertEqual(independent, shared)
+            self.assertEqual(shared['precision_attempts'][-1]['bits'],
+                             2 if readout == 'multiset' else 8)
+
     def test_serial_parallel_and_resume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

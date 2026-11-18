@@ -11,6 +11,11 @@ EQUAL = 'certified_equal'
 UNRESOLVED = 'unresolved'
 
 
+def mean_p_values_for_q(config, q):
+    by_q = config.get('mean_p_values_by_q')
+    return config['mean_p_values'] if by_q is None else by_q[str(q)]
+
+
 def exact_multiset(left, right):
     first, second = Counter(map(tuple, left)), Counter(map(tuple, right))
     same = first == second

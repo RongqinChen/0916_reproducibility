@@ -15,7 +15,7 @@ from torch import nn
 
 from brec.ppgn_realization import rpc_score
 from brec.theory import group_for_pair
-from .brec import graph_at, load_brec_data
+from .brec_data import graph_at, load_brec_data
 from .common import atomic_json, atomic_npz, atomic_output, sha256, source_identity
 from .legacy_triple_ppgn import RealizationPPGN
 from .runtime import report_phase, report_to

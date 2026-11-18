@@ -1,4 +1,4 @@
-"""Run the requested pair P=8 supplement, then triple Q=8 and Q=16."""
+"""Run the BREC pair and triple encoding stages sequentially."""
 from __future__ import annotations
 
 import argparse
@@ -13,24 +13,32 @@ import sys
 import time
 
 from rebuttal_experiments.common import atomic_json
+from rebuttal_experiments.scheduling import add_device_arguments, selected_devices
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = (('brec', 'brec_p8.json', 'brec'),
           ('triple-encodings', 'triple_encodings_q8_q16.json', 'triple_encodings'))
+FULL_STAGES = (('brec', 'brec_full.json', 'brec'),
+               ('triple-encodings', 'triple_encodings_full.json', 'triple_encodings'))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--brec-file', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--workers', type=int, default=len(os.sched_getaffinity(0)))
+    parser.add_argument('--workers', type=int, help='Override the worker count of both stages')
     parser.add_argument('--memory-gib', type=float,
                         help='Override the total RSS budget for each sequential stage in GiB')
     parser.add_argument('--reserve-gib', type=float, default=8)
     parser.add_argument('--pair-ids', type=int, nargs='+')
+    add_device_arguments(parser)
+    parser.add_argument('--full', action='store_true', help='Run the union of the default and supplemental grids')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args(argv)
-    if (args.workers < 1 or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0
+    devices = selected_devices(args, parser)
+    device_arguments = ['--devices', *devices] if args.devices else ['--device', args.device]
+    if ((args.workers is not None and args.workers < 1)
+            or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0
             or args.memory_gib is not None and
             (not math.isfinite(args.memory_gib) or args.memory_gib <= 0)):
         parser.error('Positive workers and memory budget, and finite nonnegative reserve required')
@@ -48,7 +56,8 @@ def main(argv=None):
         state = {'status': 'running', 'supervisor_pid': os.getpid(),
                  'started_unix_seconds': time.time(), 'completed_stages': [],
                  'workers': args.workers, 'memory_gib_override': args.memory_gib,
-                 'reserve_gib': args.reserve_gib}
+                 'reserve_gib': args.reserve_gib, 'devices': devices,
+                 'scope': 'full' if args.full else 'supplement'}
 
         def save(**updates):
             state.update(updates, updated_unix_seconds=time.time())
@@ -66,7 +75,8 @@ def main(argv=None):
         try:
             for signum in (signal.SIGINT, signal.SIGTERM):
                 previous[signum] = signal.signal(signum, forward)
-            for experiment, config, directory in STAGES:
+            stages = FULL_STAGES if args.full else STAGES
+            for experiment, config, directory in stages:
                 if pending_signal is not None:
                     save(status='interrupted')
                     return 128+pending_signal
@@ -74,7 +84,10 @@ def main(argv=None):
                 scientific = [sys.executable, '-u', '-m', 'rebuttal_experiments', experiment,
                     '--config', str(ROOT/'configs/rebuttal'/config),
                     '--brec-file', str(args.brec_file.resolve()), '--out', str(stage_out),
-                    '--workers', str(args.workers), '--reserve-gib', str(args.reserve_gib)]
+                    '--bank-cache', str(out/'polynomial_banks'),
+                    '--reserve-gib', str(args.reserve_gib), *device_arguments]
+                if args.workers is not None:
+                    scientific += ['--workers', str(args.workers)]
                 if args.memory_gib is not None:
                     scientific += ['--memory-gib', str(args.memory_gib)]
                 if args.pair_ids is not None:
@@ -86,7 +99,7 @@ def main(argv=None):
                     command += ['--no-progress']
                 command += ['--', *scientific]
                 save(stage=experiment, command=command)
-                print(f'补充实验阶段：{experiment} ({config})', flush=True)
+                print(f'BREC 阶段 {experiment} ({config})', flush=True)
                 active = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
                 save(stage_launcher_pid=active.pid)
                 if pending_signal is not None:

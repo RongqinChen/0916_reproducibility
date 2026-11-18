@@ -39,9 +39,11 @@ bash tools/run_rebuttal.sh brec
 
 `configs/rebuttal/brec.json` fixes two bases, polynomial/endpoint encodings, Q=2/4/8/16, and full-multiset or cumulative mean-moment readouts with P=1/2/4, for 64 pair-domain settings. Exact fractions are used when both graphs are regular; other cases use 128→256→512-bit intervals generated from integer adjacency matrices. The interval backend uses arbitrary-precision integer endpoints, with no Arb dependency and no wrapping of already-rounded floating-point features.
 
-Mean-moment discrimination is reported only when a difference interval excludes 0. Full-multiset differences are certified by projection counts or a compatible-matching deficit. Overlapping intervals or a compatible perfect matching do not prove equality and are recorded as unresolved. Each side retains 8 fixed relabelings, official reliability controls, and 2 additional permutations. Graph isomorphism is used only to align known isomorphic controls, not to encode the primary graph pairs.
+Mean-moment discrimination is reported only when a difference interval excludes 0. Full-multiset differences are certified by projection counts or a compatible-matching deficit. Overlapping intervals or a compatible perfect matching do not prove equality and are recorded as unresolved. The standalone default configuration uses 8 fixed relabelings per side, the first official reliability pair, and 2 further permutations of its first graph. Graph isomorphism aligns known isomorphic controls.
 
-By default, independent conditions run in parallel according to the available CPU count, with single-threaded numerical libraries in each process. CPU affinity reuses the physical-core-first ordering in `brec/schedule.py`. The `memory_gib: 52` setting is the total RSS budget for the scheduler and all workers. The scheduler admits tasks based on estimated memory, monitors actual RSS, and reserves 8 GiB of available system memory by default. Shared pages may be counted more than once in RSS, making this accounting conservative. If the total budget is exceeded, the largest unfinished condition is stopped and recorded as `resource_limited / scheduler_memory_limit`; the numerical path is not changed automatically. Results are saved atomically per condition, interruptions clean up workers, and `--resume` skips existing records and continues unfinished conditions.
+With `seconds_per_condition: null`, readouts for the same pair, basis, and variant share feature matrices up to the largest Q still pending at each precision. Lower Q settings select their columns by channel descriptor in the original order. The mean readouts take the requested channel subset and moment prefix from the shared accumulation. Conditions that stop at the same precision share the relabeling and reliability checks on their combined channels. A finite wall limit schedules each condition independently so each starts with its own time budget.
+
+By default, workers run in parallel according to the available CPU count, with single-threaded numerical libraries in each process. CPU affinity reuses the physical-core-first ordering in `brec/schedule.py`. The `memory_gib: 52` setting is the total RSS budget for the scheduler and all workers. The scheduler admits tasks based on estimated memory, monitors actual RSS, and reserves 8 GiB of available system memory by default. Shared pages may be counted more than once in RSS, making this accounting conservative. Under memory pressure, a grouped task may split into independent conditions. When the scheduler stops an individual condition for exceeding its RAM policy, it records `resource_limited / scheduler_memory_limit`. Results are saved atomically per condition, interruptions clean up workers, and `--resume` skips existing records and continues unfinished conditions.
 
 There is no per-condition time limit (`seconds_per_condition: null`); the compatible-matching edge limit remains 2 million. To impose a time limit, set `seconds_per_condition` to a positive number of seconds. Fix resource settings according to the server's capacity before producing formal results. Use a new output directory after changing the code, configuration, or concurrency settings. Processes already running continue to use the settings read at startup.
 
@@ -73,6 +75,55 @@ python -m brec.reproducibility --first outputs/brec_run1 --second outputs/brec_r
 ```
 
 The comparison excludes elapsed time. Incomplete or resource-limited runs cannot pass. `passed: true` means only that records agree for the requested pair-domain BREC conditions. It does not check neural weights, guarantee agreement across platforms, or provide a mathematical proof for arbitrary relabelings.
+
+### CUDA execution
+
+Install CuPy in the same Python environment as the BREC dependencies. Select the wheel for your NVIDIA driver and CUDA version. [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html)
+
+```bash
+# Example for a server using CUDA 12
+python -m pip install 'cupy-cuda12x[ctk]'
+export BREC_FILE=/server/data/BREC/brec_v3.npy
+
+# Smoke test on a few official pairs
+REBUTTAL_OUT=outputs/brec_cuda_smoke bash tools/run_rebuttal.sh brec \
+  --device cuda:0 --workers 2 --pair-ids 0 60 140 320
+
+# Full run
+REBUTTAL_OUT=outputs/brec_cuda bash tools/run_rebuttal.sh brec --device cuda:0 --workers 2
+```
+
+CUDA computes the sparse adjacency products in the polynomial recurrence with multiword integers. Regular graphs use common-denominator numerators. Irregular graphs round each endpoint product outward on the same dyadic grid as the CPU reference. Channel construction, moment accumulation, multiset decisions, and control comparisons run on the CPU. The startup probe compares sample CUDA products with the reference, and the manifest records the device and CUDA/CuPy versions. Resume with the same device and worker settings.
+
+Use the same pair subset and worker count on CPU and CUDA to measure elapsed time. The speedup depends on graph sizes and the fraction of runtime spent in polynomial products. `--memory-gib` covers host RAM, and `--workers` limits concurrent CUDA contexts on the selected device.
+
+### Reuse across tuple orders
+
+`bash tools/run_rebuttal.sh budget-extend` runs the pair and triple supplements with a shared cache at `$REBUTTAL_OUT/polynomial_banks`. Add `--device cuda:0` to use CUDA in both stages. When running `brec` and `triple-encodings` individually, pass the same `--bank-cache DIRECTORY` to both. Entries use the labeled adjacency and basis as their key. For a regular graph evaluated with exact rationals in the pair experiment, the triple experiment reads the same integer polynomial numerators and extends them if it needs a larger Q. The pair interval path retains its configured precisions, and the triple experiment generates its exact numerators for those graphs.
+
+The triple readout also shares a pair channel's marginal moment sums across coordinate positions. Each ordered pair occurs exactly (n) times in any two distinct positions of the full ordered triple domain. Full multiset comparisons still use complete triple rows with their original multiplicities.
+
+### Full pair and triple run
+
+Pass `--full` to run the union of the existing grids in one invocation. Each row includes both bases, both variants for that tuple order, and the full multiset readout at every Q.
+
+| Tuple order K | Q | Mean-moment P | Conditions per graph pair |
+|---|---|---|---:|
+| 2 | 2, 4, 8, 16 | 1, 2, 4, 8 | 80 |
+| 3 | 1, 2, 4 | 1, 2, 4, 8, 16 | 72 |
+| 3 | 8, 16 | 1, 2, 4, 8 | 40 |
+
+Both full configurations use the complete official reliability block for each BREC graph pair. They check all 32 adjacent pairs of same-graph relabelings stored in the 64-entry block, identified by dataset indices in the result records. The pair stage checks all aligned entries using exact equality or interval overlap. The triple stage checks all aligned bank entries and the complete feature rows of up to 16 sampled triples per comparison. BREC's neural evaluation computes a Hotelling statistic from the same reliability block. [Official BREC implementation](https://github.com/GraphPKU/BREC/blob/Release/base/test_BREC.py#L160-L219)
+
+```bash
+REBUTTAL_OUT=outputs/rebuttal_full \
+  bash tools/run_rebuttal.sh budget-extend --full \
+    --devices cuda:0 cuda:1 cuda:2 cuda:3 --workers 4
+```
+
+Each stage spreads graph-pair jobs across all four devices. With four workers, each device handles at most one active job, subject to the host memory budget. The triple joint channels use CUDA for exact integer products and degree-group sums. Canonical radical conversion, multiset checks, and power readouts use the CPU. Run with a CUDA 12.8 or newer toolkit for GeForce RTX 5090 cards. [NVIDIA CUDA compatibility matrix](https://docs.nvidia.com/datacenter/tesla/drivers/latest/cuda-toolkit-driver-and-architecture-matrix.html)
+
+All 400 pairs are selected by default, for 76,800 condition records. The run stores results in `brec/` and `triple_encodings/` under the chosen output root. Both stages use the shared polynomial bank cache. Repeat the same command with `--resume` to continue.
 
 ## Protein prediction
 

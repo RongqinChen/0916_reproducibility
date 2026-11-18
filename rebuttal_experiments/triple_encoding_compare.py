@@ -8,6 +8,7 @@ from .triple_exact import weighted_counts, moment_from_counts
 
 
 def compare_kernels(kernels, triples, weights, q, basis, p_values, budget=None):
+    """Compare weighted representatives covering the full ordered triple domain."""
     baseline_keys = descriptors(q,3,'endpoint')
     keys = descriptors(q,3,'joint')
     raw_colors = [[0]*len(rows) for rows in triples]
@@ -15,6 +16,7 @@ def compare_kernels(kernels, triples, weights, q, basis, p_values, budget=None):
     differences = {}
     results = {}
     raw_keys = []
+    pair_marginals = {}
     n = kernels[0].n
     if kernels[1].n != n:
         raise ValueError('Equal node counts required for this BREC comparison')
@@ -41,9 +43,14 @@ def compare_kernels(kernels, triples, weights, q, basis, p_values, budget=None):
         raw_needed = raw_difference is None and not (key[0]=='joint' and 0 in key[1:])
         powers_needed = [power for power in range(2,max(p_values)+1)
                          if any(p>=power and p not in differences for p in p_values)]
+        # Each ordered pair occurs n times at any two distinct triple
+        # positions. Reuse its marginal sums across positions; raw rows
+        # still need each position's value to preserve their joint distribution.
+        marginal = pair_marginals.setdefault(key[:-2], {}) if key[0] in ('pair','endpoint') else {}
+        new_powers = any(power not in marginal for power in powers_needed)
         values = [kernel.column(rows,key) for kernel,rows in zip(kernels,triples)] if (
-            raw_needed or powers_needed) else None
-        moment_counts = [weighted_counts(side,w) for side,w in zip(values,weights)] if powers_needed else None
+            raw_needed or new_powers) else None
+        moment_counts = [weighted_counts(side,w) for side,w in zip(values,weights)] if new_powers else None
         if raw_needed:
             vocabulary = {}
             raw_colors = [[vocabulary.setdefault((old,value),len(vocabulary))
@@ -62,7 +69,9 @@ def compare_kernels(kernels, triples, weights, q, basis, p_values, budget=None):
                                   'values': [kernels[side].value(row,k).json() for k in raw_keys],
                                   'multiplicities': [counts[0][witness],counts[1][witness]]}
         if any(p not in differences for p in p_values):
-            left,right = [kernel.mean_sum(key) for kernel in kernels]
+            if 1 not in marginal:
+                marginal[1] = [kernel.mean_sum(key) for kernel in kernels]
+            left,right = marginal[1]
             if left != right:
                 for p in p_values:
                     if p not in differences:
@@ -73,7 +82,9 @@ def compare_kernels(kernels, triples, weights, q, basis, p_values, budget=None):
         for power in powers_needed:
             if not any(p>=power and p not in differences for p in p_values):
                 continue
-            left,right = [moment_from_counts(counts,power) for counts in moment_counts]
+            if power not in marginal:
+                marginal[power] = [moment_from_counts(counts,power) for counts in moment_counts]
+            left,right = marginal[power]
             if left != right:
                 for p in p_values:
                     if p>=power and p not in differences:

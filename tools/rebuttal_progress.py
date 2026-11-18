@@ -122,8 +122,10 @@ def describe(command):
         config = json.loads(Path(args.config or f'configs/rebuttal/{config_name}.json').read_text())
         completed = 0
         if kind == 'triple-encodings':
-            total = (len(args.pair_ids) if args.pair_ids else 400)*len(config['q_values'])*len(
-                config['bases'])*len(config['variants'])*(1+len(config['mean_p_values']))
+            from rebuttal_experiments.readouts import mean_p_values_for_q
+            readout_count = sum(1 + len(mean_p_values_for_q(config, q)) for q in config['q_values'])
+            total = ((len(args.pair_ids) if args.pair_ids else 400) * readout_count
+                     * len(config['bases']) * len(config['variants']))
             completed = len(list((path / 'records').glob('*.json'))) if path else 0
             unit = 'conditions'
         elif kind == 'triple-ppgn':

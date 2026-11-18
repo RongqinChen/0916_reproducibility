@@ -8,6 +8,7 @@ import numpy as np
 
 from .common import simple_adjacency
 from .intervals import Interval
+from .polynomial_banks import scaled_polynomial_bank
 
 
 def scalar_factory(mode, bits=128):
@@ -73,22 +74,45 @@ def matmul(left, right, budget=None):
     return result
 
 
-def polynomial_bank(adjacency, q, basis='monomial', mode='float64', bits=128, budget=None):
+def polynomial_bank(adjacency, q, basis='monomial', mode='float64', bits=128, budget=None,
+                    *, accelerator=None, bank_cache=None):
     if q < 1 or basis not in ('monomial', 'chebyshev', 'shifted'):
         raise ValueError('Invalid polynomial budget/basis')
     if basis == 'shifted' and q != 1:
         raise ValueError('The additional (I,I+M) basis is defined here only at Q=1')
+    if mode == 'exact' and (accelerator is not None or bank_cache is not None):
+        return _regular_polynomial_bank(adjacency, q, basis, budget, accelerator, bank_cache)
     matrix = normalized_matrix(adjacency, mode, bits)
     make = scalar_factory(mode, bits)
     eye = np.asarray([[make(int(i == j)) for j in range(len(matrix))]
                       for i in range(len(matrix))], dtype=matrix.dtype)
     bank = [eye, eye + matrix if basis == 'shifted' else matrix]
+    gpu_product = (accelerator.interval_product(matrix, bits)
+                   if accelerator is not None and mode == 'interval' and q > 1 else None)
     for _ in range(2, q + 1):
-        product = matmul(matrix, bank[-1], budget)
+        if gpu_product is None:
+            product = matmul(matrix, bank[-1], budget)
+        else:
+            if budget:
+                budget.check()
+            product = gpu_product(bank[-1])
         # Keep the ndarray on the left: an Interval scalar otherwise tries to
         # coerce the entire matrix to Fraction instead of multiplying its entries.
         bank.append(product if basis == 'monomial' else product * make(2) - bank[-2])
     return np.stack(bank)
+
+
+def _regular_polynomial_bank(adjacency, q, basis, budget, accelerator, bank_cache):
+    adjacency = simple_adjacency(adjacency)
+    degrees = adjacency.sum(1)
+    if not np.all(degrees == degrees[0]):
+        raise ValueError('Rational backend is restricted to regular graphs')
+    d = max(1, int(degrees[0]))
+    # D^-1 A equals the symmetric normalization on regular graphs.
+    bank = scaled_polynomial_bank(adjacency, [d] * len(adjacency), q, basis, budget,
+                                  accelerator=accelerator, cache_directory=bank_cache)
+    rational = np.vectorize(Fraction, otypes=[object])
+    return np.stack([rational(matrix, d**degree) for degree, matrix in enumerate(bank)])
 
 
 def descriptors(q, order, variant):
@@ -150,8 +174,9 @@ def feature_chunks(adjacency, bank, q, order, variant, chunk_size=256,
 
 
 def feature_matrix(adjacency, q, order, variant, basis='monomial', mode='float64',
-                   bits=128, budget=None):
-    bank = polynomial_bank(adjacency, q, basis, mode, bits, budget)
+                   bits=128, budget=None, *, accelerator=None, bank_cache=None):
+    bank = polynomial_bank(adjacency, q, basis, mode, bits, budget,
+                           accelerator=accelerator, bank_cache=bank_cache)
     n, width = len(adjacency), len(descriptors(q, order, variant))
     if budget:
         budget.check(n**order * width * (256 if bank.dtype == object else bank.dtype.itemsize))
@@ -164,12 +189,14 @@ def feature_matrix(adjacency, q, order, variant, basis='monomial', mode='float64
 def moments(rows, p, budget=None):
     if p < 1 or not len(rows):
         raise ValueError('Positive moment budget and a nonempty object domain are required')
-    result = []
-    for power in range(1, p + 1):
+    return list(itertools.chain.from_iterable(itertools.islice(moment_blocks(rows, budget), p)))
+
+
+def moment_blocks(rows, budget=None):
+    for power in itertools.count(1):
         if budget:
             budget.check()
-        result.extend((rows**power).sum(0) / len(rows))
-    return result
+        yield (rows**power).sum(0) / len(rows)
 
 
 def constructed_graphs():

@@ -1,5 +1,6 @@
 # Exact/interval BREC and shared supplementary experiment dependencies.
 numpy>=2.4,<2.5
 networkx>=3.6,<4
+pynauty==2.8.8.1
 psutil>=5.9
 threadpoolctl>=3.1

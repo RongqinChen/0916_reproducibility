@@ -170,7 +170,9 @@ class TripleExactTests(unittest.TestCase):
             source = root/'brec.npy'
             np.save(source,data,allow_pickle=False)
             config = json.loads((ROOT/'configs/rebuttal/triple_encodings.json').read_text())
-            config.update(expected_brec_sha256=sha256(source),q_values=[1,2],mean_p_values=[1,2,4],
+            del config['mean_p_values']
+            config.update(expected_brec_sha256=sha256(source),q_values=[1,2],
+                          mean_p_values_by_q={'1':[1,2,4],'2':[1,2]},
                           relabels=1,reliability_relabels=0,control_triples=2,memory_gib=4)
             config_path = root/'config.json'
             config_path.write_text(json.dumps(config))
@@ -181,7 +183,9 @@ class TripleExactTests(unittest.TestCase):
             result = subprocess.run(command,cwd=ROOT,env=env,capture_output=True,text=True,timeout=90)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             records = list((root/'run/records').glob('*.json'))
-            self.assertEqual(len(records),32)
+            self.assertEqual(len(records),28)
+            self.assertEqual(sum('_q1_mean_p4_' in path.name for path in records),4)
+            self.assertFalse(any('_q2_mean_p4_' in path.name for path in records))
             self.assertTrue(all(json.loads(path.read_text())['status'] in
                                 ('certified_different','certified_equal') for path in records))
             before = {path.name:path.read_bytes() for path in records}
@@ -191,7 +195,7 @@ class TripleExactTests(unittest.TestCase):
             for path in records[1:]:
                 self.assertEqual(path.read_bytes(),before[path.name])
             summary = json.loads((root/'run/summary.json').read_text())
-            self.assertEqual(len(summary['settings']),32)
+            self.assertEqual(len(summary['settings']),28)
             self.assertTrue(all(sum(row['counts'].values())==400 for row in summary['settings']))
             row = json.loads(records[0].read_text())
             row['q'] += 1

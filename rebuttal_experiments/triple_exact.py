@@ -16,6 +16,7 @@ import pynauty
 
 from .common import simple_adjacency
 from .encodings import descriptors
+from .polynomial_banks import scaled_polynomial_bank
 from .runtime import report_phase
 
 
@@ -149,7 +150,7 @@ def ordered_triple_orbits(adjacency):
 
 
 class TripleKernel:
-    def __init__(self, adjacency, q, basis, budget=None):
+    def __init__(self, adjacency, q, basis, budget=None, *, bank_cache=None, accelerator=None):
         self.adjacency = simple_adjacency(adjacency)
         self.n, self.q, self.basis, self.budget = len(adjacency),q,basis,budget
         if q < 1 or basis not in ('monomial','chebyshev'):
@@ -159,18 +160,9 @@ class TripleKernel:
         self.degree = np.maximum(self.adjacency.sum(1),1).tolist()
         self.scale = math.lcm(*self.degree)
         self.groups = {d:np.flatnonzero(np.asarray(self.degree)==d) for d in set(self.degree)}
-        neighbors = [np.flatnonzero(row) for row in self.adjacency]
-        eye = np.eye(self.n,dtype=object)
-        transition = self.adjacency.astype(object)*np.asarray(
-            [self.scale//d for d in self.degree],dtype=object)[:,None]
-        self.banks = [eye,transition]
-        for power in range(2,q+1):
-            if budget:
-                budget.check()
-            last = self.banks[-1]
-            product = np.array([last[neighbors[i]].sum(0)*(self.scale//self.degree[i])
-                                for i in range(self.n)],dtype=object)
-            self.banks.append(product if basis=='monomial' else 2*product-self.scale**2*self.banks[-2])
+        self.banks = scaled_polynomial_bank(self.adjacency, self.degree, q, basis, budget,
+                                            cache_directory=bank_cache, accelerator=accelerator)
+        self.accelerator, self.cuda_joint = accelerator, None
         self.pair_cache, self.h_cache = {}, {}
         self.max_abs = [max(abs(int(value)) for value in bank.flat) for bank in self.banks]
         self.integer_banks = {}
@@ -240,42 +232,58 @@ class TripleKernel:
                 terms.append((radical,Fraction(count*square,d*d*self.scale**sum(degrees))))
         return Radical.make(terms)
 
+    def int64_joint_blocks(self, triples, degrees):
+        for degree in degrees:
+            if degree not in self.integer_banks:
+                self.integer_banks[degree] = self.banks[degree].astype('int64')
+        rows = np.asarray(triples,dtype='int64')
+        for start in range(0,len(rows),256):
+            if self.budget:
+                self.budget.check()
+            block = rows[start:start+256]
+            product = self.integer_banks[degrees[0]][block[:,0]]*self.integer_banks[degrees[1]][block[:,1]]
+            product *= self.integer_banks[degrees[2]][block[:,2]]
+            yield block, np.column_stack([product[:,indices].sum(1) for indices in self.groups.values()])
+
+    def joint_radicals(self, blocks, degrees):
+        answer, vocabulary = [], {}
+        denominator = self.scale**sum(degrees)
+        for rows, counts in blocks:
+            for triple, row_counts in zip(rows, counts):
+                outer = math.prod(self.degree[vertex] for vertex in triple)
+                totals = tuple(map(int, row_counts))
+                identity = outer,totals
+                if identity not in vocabulary:
+                    terms = []
+                    for d,count in zip(self.groups,totals):
+                        if count:
+                            square,radical = square_part(outer*d)
+                            terms.append((radical,Fraction(count*square,d*d*denominator)))
+                    vocabulary[identity] = Radical.make(terms)
+                answer.append(vocabulary[identity])
+        return answer
+
+    def cuda_joint_column(self, triples, degrees):
+        from .brec_cuda import CudaJointSums
+        with self.accelerator.allocation_guard():
+            if self.cuda_joint is None:
+                self.cuda_joint = CudaJointSums(self.accelerator, self.banks, self.max_abs,
+                                                list(self.groups.values()))
+            return self.joint_radicals(self.cuda_joint.blocks(triples, degrees, self.budget), degrees)
+
     def column(self, triples, key):
         if key[0]=='joint' and 0 not in key[1:]:
             degrees = key[1:]
             bound = math.prod(self.max_abs[degree] for degree in degrees)
             if not bound:
                 return [ZERO]*len(triples)
+            if self.accelerator is not None:
+                return self.cuda_joint_column(triples, degrees)
             # All factors have nonzero integer bounds. This also bounds every
             # partial product and every signed degree-group sum, so int64 is
             # an exact arithmetic optimization rather than a numeric tolerance.
             if self.n*bound <= np.iinfo('int64').max:
-                for degree in degrees:
-                    if degree not in self.integer_banks:
-                        self.integer_banks[degree] = self.banks[degree].astype('int64')
-                rows = np.asarray(triples,dtype='int64')
-                answer, vocabulary = [], {}
-                denominator = self.scale**sum(degrees)
-                for start in range(0,len(rows),256):
-                    if self.budget:
-                        self.budget.check()
-                    block = rows[start:start+256]
-                    product = self.integer_banks[degrees[0]][block[:,0]]*self.integer_banks[degrees[1]][block[:,1]]
-                    product *= self.integer_banks[degrees[2]][block[:,2]]
-                    counts = [product[:,indices].sum(1) for indices in self.groups.values()]
-                    for index,triple in enumerate(block):
-                        outer = math.prod(self.degree[vertex] for vertex in triple)
-                        totals = tuple(int(count[index]) for count in counts)
-                        identity = outer,totals
-                        if identity not in vocabulary:
-                            terms = []
-                            for d,count in zip(self.groups,totals):
-                                if count:
-                                    square,radical = square_part(outer*d)
-                                    terms.append((radical,Fraction(count*square,d*d*denominator)))
-                            vocabulary[identity] = Radical.make(terms)
-                        answer.append(vocabulary[identity])
-                return answer
+                return self.joint_radicals(self.int64_joint_blocks(triples, degrees), degrees)
         return [self.value(triple,key) for triple in triples]
 
     def mean_sum(self, key):

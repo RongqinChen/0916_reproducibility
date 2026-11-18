@@ -15,14 +15,18 @@ from brec.determinism import prepare_environment, start_brec
 prepare_environment()
 import numpy as np
 
+from .brec_data import graph_at as graph_at
+from .brec_data import (OFFICIAL_RELIABILITY, PAIR_COUNT, load_brec_data,
+                        main_graph_pair, official_reliability_pairs, reliability_mapping,
+                        validate_reliability_configuration)
 from .readouts import (DIFFERENT, EQUAL, UNRESOLVED, exact_multiset,
                        interval_multiset, mean_decision)
-from .common import (Budget, ResourceLimit, atomic_json,
-                     configuration, hard_wall_limit, permutations, run_directory,
-                     sha256, simple_adjacency)
-from .encodings import feature_matrix, moments
+from .common import (Budget, ResourceLimit, atomic_json, configuration, hard_wall_limit,
+                     permutations, run_directory)
+from .encodings import descriptors, feature_matrix, moment_blocks
 from .runtime import report_phase
-from .scheduling import estimate_bytes, ordered_cpus, run_tasks
+from .scheduling import (add_device_arguments, device_configuration, estimate_bytes,
+                         ordered_cpus, run_tasks, selected_devices, worker_count)
 
 
 def validate_configuration(config):
@@ -50,8 +54,8 @@ def validate_configuration(config):
     scale = config.get('memory_reservation_scale', 1.0)
     if type(scale) not in (int, float) or not math.isfinite(scale) or not 0 < scale <= 1:
         raise ValueError('memory_reservation_scale must be in (0,1]')
-    for key, minimum in (('relabels', 1), ('reliability_relabels', 0),
-                         ('seed', 0), ('max_candidate_edges', 1)):
+    validate_reliability_configuration(config)
+    for key, minimum in (('seed', 0), ('max_candidate_edges', 1)):
         if type(config.get(key)) is not int or config[key] < minimum:
             raise ValueError(f'{key} must be an integer >= {minimum}')
     for key in ('memory_gib', 'seconds_per_condition'):
@@ -62,33 +66,9 @@ def validate_configuration(config):
             raise ValueError(f'{key} must be positive and finite; only seconds_per_condition may be null')
 
 
-def load_brec_data(path, expected_sha256):
-    if expected_sha256 and sha256(path) != expected_sha256:
-        raise ValueError('BREC input hash differs from the frozen protocol')
-    data = np.load(path, allow_pickle=False, mmap_mode='r')
-    if data.ndim != 1 or len(data) != 51200 or data.dtype.kind not in ('S', 'U'):
-        raise ValueError('Expected the 51200-entry official graph6 byte/string array')
-    return data
-
-
-def graph_at(data, index):
-    import networkx as nx
-    value = data[index]
-    value = value.encode() if isinstance(value, str) else bytes(value)
-    return simple_adjacency(nx.to_numpy_array(nx.from_graph6_bytes(value.strip()), dtype='int64'))
-
-
 def is_regular(graph):
     degrees = graph.sum(1)
     return bool(np.all(degrees == degrees[0]))
-
-
-def decide(rows, readout, p, mode, budget, config):
-    if readout == 'mean':
-        return mean_decision(*(moments(x, p, budget) for x in rows))
-    if mode == 'exact':
-        return exact_multiset(*rows)
-    return interval_multiset(*rows, budget, config['max_candidate_edges'])
 
 
 def aligned_control(original, changed, new_to_old, mode):
@@ -106,102 +86,156 @@ def aligned_control(original, changed, new_to_old, mode):
     return {'aligned_max_absolute_error': float(np.max(np.abs(expected - changed)))}
 
 
-def relabel_controls(graphs, originals, q, basis, variant, mode, bits, config, pid, budget):
+def relabel_controls(graphs, originals, q, basis, variant, mode, bits, config, pid, budget,
+                     *, features=feature_matrix):
     result = []
     for graph_index, (graph, original) in enumerate(zip(graphs, originals)):
         for index, permutation in enumerate(permutations(
                 len(graph), config['relabels'], config['seed'] + 1009 * pid + graph_index)):
             report_phase('main_relabel', graph=graph_index, relabel=index + 1,
                          total=config['relabels'], bits=bits)
-            changed = feature_matrix(graph[np.ix_(permutation, permutation)], q, 2, variant,
-                                     basis, mode, bits, budget)
+            changed = features(graph[np.ix_(permutation, permutation)], q, 2, variant,
+                               basis, mode, bits, budget)
             result.append({'graph': graph_index, 'new_index_to_old': permutation.tolist(),
                            **aligned_control(original, changed, permutation, mode)})
     return result
 
 
-def reliability_mapping(first, second):
-    """Find and verify a control-only isomorphism without VF2 backtracking.
-
-    Canonical vertex orders come from nauty. The resulting permutation is
-    independently checked against the integer adjacencies before it is used.
-    Main graph pairs are never passed to this function.
-    """
-    import pynauty
-    first, second = simple_adjacency(first), simple_adjacency(second)
-    n = len(first)
-    if len(second) != n:
-        raise ValueError('The official reliability representatives have different node counts')
-    orders = []
-    for adjacency in (first, second):
-        graph = pynauty.Graph(n, directed=False, adjacency_dict={
-            i: np.flatnonzero(adjacency[i]).tolist() for i in range(n)})
-        order = pynauty.canon_label(graph)
-        if sorted(order) != list(range(n)):
-            raise ValueError('Invalid canonical vertex ordering')
-        orders.append(order)
-    old_to_new = np.empty(n, dtype='int64')
-    old_to_new[orders[0]] = orders[1]
-    new_to_old = np.argsort(old_to_new)
-    if not np.array_equal(first[np.ix_(new_to_old, new_to_old)], second):
-        raise ValueError('The official reliability representatives are not isomorphic')
-    return old_to_new
-
-
-def reliability_control(data, pid, q, basis, variant, mode, bits, config, budget):
-    graphs = [graph_at(data, (pid + 400) * 64 + i) for i in range(2)]
-    if mode == 'exact' and not all(is_regular(g) for g in graphs):
-        mode = 'interval'
-    if budget:
-        budget.check()
-    report_phase('reliability_mapping', nodes=len(graphs[0]))
-    mapping = reliability_mapping(*graphs)
-    if budget:
-        budget.check()
-    # The isomorphism is used ONLY to align a known-isomorphic control. It is
-    # never a preprocessing step or input to the main graph comparison.
-    new_to_old = np.argsort(mapping)
-    report_phase('reliability_features', graph=0, bits=bits)
-    original = feature_matrix(graphs[0], q, 2, variant, basis, mode, bits, budget)
-    report_phase('reliability_features', graph=1, bits=bits)
-    changed = feature_matrix(graphs[1], q, 2, variant, basis, mode, bits, budget)
-    report_phase('reliability_alignment')
-    result = [{'official_representatives': aligned_control(original, changed, new_to_old, mode),
-               'control_old_to_new': mapping.tolist()}]
-    for index, permutation in enumerate(permutations(
-            len(graphs[0]), config['reliability_relabels'], config['seed'] + 7919 * pid)):
-        report_phase('reliability_relabel', relabel=index + 1,
-                     total=config['reliability_relabels'], bits=bits)
-        relabelled = feature_matrix(graphs[0][np.ix_(permutation, permutation)], q, 2,
-                                    variant, basis, mode, bits, budget)
-        result.append({'new_index_to_old': permutation.tolist(),
-                       **aligned_control(original, relabelled, permutation, mode)})
+def reliability_control(data, pid, q, basis, variant, mode, bits, config, budget,
+                        *, features=feature_matrix):
+    result = []
+    count = config.get('reliability_relabels', 0)
+    for indices, graphs in official_reliability_pairs(data, pid, config):
+        arithmetic = ('interval' if mode == 'exact' and not all(is_regular(g) for g in graphs)
+                      else mode)
+        if budget:
+            budget.check()
+        report_phase('reliability_mapping', nodes=len(graphs[0]), dataset_indices=indices)
+        mapping = reliability_mapping(*graphs)
+        if budget:
+            budget.check()
+        # Use the verified isomorphism to align features on the control graphs.
+        report_phase('reliability_features', graph=0, bits=bits)
+        original = features(graphs[0], q, 2, variant, basis, arithmetic, bits, budget)
+        report_phase('reliability_features', graph=1, bits=bits)
+        changed = features(graphs[1], q, 2, variant, basis, arithmetic, bits, budget)
+        report_phase('reliability_alignment')
+        control = {'official_representatives': aligned_control(
+                       original, changed, np.argsort(mapping), arithmetic),
+                   'control_old_to_new': mapping.tolist()}
+        if config.get('reliability_protocol') == OFFICIAL_RELIABILITY:
+            control['dataset_indices'] = list(indices)
+        result.append(control)
+        del changed
+        relabels = permutations(len(graphs[0]), count, config['seed'] + 7919 * pid) if count else ()
+        for index, permutation in enumerate(relabels):
+            report_phase('reliability_relabel', relabel=index + 1, total=count, bits=bits)
+            relabelled = features(graphs[0][np.ix_(permutation, permutation)], q, 2,
+                                  variant, basis, arithmetic, bits, budget)
+            result.append({'new_index_to_old': permutation.tolist(),
+                           **aligned_control(original, relabelled, permutation, arithmetic)})
+        del original
     return result
 
 
 def evaluate_condition(data, pid, basis, variant, q, readout, p, config):
+    return next(evaluate_budgets(data, pid, basis, variant, [(q, readout, p)], config))[1]
+
+
+def _readout_decisions(rows, settings, columns, mode, bits, budget, config):
+    """Reuse cumulative moment blocks for all requested channel projections."""
+    blocks = zip(*(moment_blocks(row, budget) for row in rows))
+    moments = []
+    moment_error = None
+    for setting in sorted(settings, key=lambda setting: (setting[1], setting[2], setting[0])):
+        q, readout, p = setting
+        report_phase('main_readout', readout=readout, p=p, bits=bits, q=q)
+        if readout == 'mean' and moment_error is not None:
+            yield setting, moment_error
+            continue
+        try:
+            if readout == 'mean':
+                while len(moments) < p:
+                    moments.append(next(blocks))
+                vectors = ([value for block in side for value in block[columns[q]]]
+                           for side in zip(*moments[:p]))
+                decision = mean_decision(*vectors)
+            else:
+                projected = (row[:, columns[q]] for row in rows)
+                decision = (exact_multiset(*projected) if mode == 'exact' else
+                            interval_multiset(*projected, budget, config['max_candidate_edges']))
+        except (ResourceLimit, MemoryError) as exc:
+            decision = {'status': 'resource_limited', 'reason': str(exc)}
+            if readout == 'mean' and len(moments) < p:
+                # Larger prefixes also depend on the failed block.
+                moment_error = decision
+        yield setting, decision
+
+
+def evaluate_budgets(data, pid, basis, variant, settings, config):
     budget = Budget(config['seconds_per_condition'], config['memory_gib'])
+    features = feature_matrix
+    if config.get('bank_cache') is not None:
+        features = partial(features, bank_cache=config['bank_cache'])
+    if config.get('device', 'cpu') != 'cpu':
+        from .brec_cuda import CudaProducts
+        features = partial(features, accelerator=CudaProducts(config['device']))
     report_phase('load_graphs')
-    graphs = [graph_at(data, 64 * pid + i) for i in range(2)]
+    graphs = main_graph_pair(data, pid)
     mode = 'exact' if all(is_regular(g) for g in graphs) else 'interval'
     precisions = [None] if mode == 'exact' else config['precision_bits']
-    attempts = []
+    attempts = {setting: [] for setting in settings}
     for bits in precisions:
+        precision = bits or 128
+        degrees = {q for q, _, _ in attempts}
+        max_q = max(degrees)
+        keys = {q: descriptors(q, 2, variant) for q in degrees}
+        positions = {key: index for index, key in enumerate(keys[max_q])}
+        # Endpoint channels can move when Q changes. Select them by descriptor
+        # and preserve the protocol's original order for each readout.
+        columns = {q: (slice(None) if q == max_q else [positions[key] for key in keys[q]])
+                   for q in degrees}
         rows = []
         for index, graph in enumerate(graphs):
-            report_phase('main_features', graph=index, arithmetic=mode, bits=bits)
-            rows.append(feature_matrix(graph, q, 2, variant, basis, mode, bits or 128, budget))
-        report_phase('main_readout', readout=readout, p=p, bits=bits)
-        decision = decide(rows, readout, p, mode, budget, config)
-        attempts.append({'bits': bits, 'status': decision['status'], 'reason': decision.get('reason')})
-        if decision['status'] != UNRESOLVED:
-            break
-    # A detected difference cannot be promoted before its same-graph controls.
-    relabels = relabel_controls(graphs, rows, q, basis, variant, mode, bits or 128, config, pid, budget)
-    reliability = reliability_control(data, pid, q, basis, variant, mode, bits or 128, config, budget)
-    return {**decision, 'arithmetic': mode, 'precision_attempts': attempts,
-            'relabel_controls': relabels, 'official_reliability_controls': reliability,
-            'width': rows[0].shape[1], 'elapsed_seconds': time.monotonic() - budget.started}
+            report_phase('main_features', graph=index, arithmetic=mode, bits=bits, q=max_q)
+            rows.append(features(graph, max_q, 2, variant, basis, mode, precision, budget))
+        finalized = []
+        for setting, decision in _readout_decisions(rows, attempts, columns, mode, bits, budget, config):
+            if decision['status'] == 'resource_limited':
+                del attempts[setting]
+                yield setting, decision
+                continue
+            attempts[setting].append({'bits': bits, 'status': decision['status'],
+                                      'reason': decision.get('reason')})
+            if decision['status'] != UNRESOLVED or bits == precisions[-1]:
+                finalized.append((setting, decision))
+        if finalized:
+            try:
+                # Run real recomputations for the same-graph controls once
+                # on the union of the channels that stop at this precision.
+                control_q = max(q for (q, _, _), _ in finalized)
+                relabels = []
+                if config.get('relabels', 0):
+                    relabels = relabel_controls(
+                        graphs, [row[:, columns[control_q]] for row in rows], control_q,
+                        basis, variant, mode, precision, config, pid, budget, features=features)
+                reliability = reliability_control(data, pid, control_q, basis, variant, mode,
+                                                  precision, config, budget, features=features)
+                controls = {'relabel_controls': relabels,
+                            'official_reliability_controls': reliability}
+            except (ResourceLimit, MemoryError) as exc:
+                for setting, _ in finalized:
+                    yield setting, {'status': 'resource_limited', 'reason': str(exc)}
+                    del attempts[setting]
+            else:
+                for setting, decision in finalized:
+                    yield setting, {**decision, **controls, 'arithmetic': mode,
+                                    'precision_attempts': attempts.pop(setting),
+                                    'width': len(keys[setting[0]]),
+                                    'elapsed_seconds': time.monotonic() - budget.started}
+        if not attempts:
+            return
+        del rows
 
 
 def experiment_settings(config):
@@ -228,12 +262,55 @@ def condition_record(data, config, task):
     return row
 
 
+def group_conditions(tasks, config):
+    # Sharing wall time would change the semantics of a finite per-condition limit.
+    if config['seconds_per_condition'] is not None:
+        return tasks
+    groups = {}
+    for task in tasks:
+        row = task['record']
+        key = tuple(row[name] for name in ('pair_id', 'basis', 'variant'))
+        groups.setdefault(key, []).append(task)
+    return [{**group[0], 'conditions': group,
+             'estimated_bytes': max(task['estimated_bytes'] for task in group),
+             'work': max(task['work'] for task in group)}
+            if len(group) > 1 else group[0] for group in groups.values()]
+
+
+def task_records(data, config, task):
+    if 'device' in task:
+        config = {**config, 'device': task['device']}
+    if 'conditions' not in task:
+        return condition_record(data, config, task)
+    return grouped_records(data, config, task['conditions'])
+
+
+def grouped_records(data, config, tasks):
+    pending = {tuple(task['record'][name] for name in ('q', 'readout', 'p')): task
+               for task in tasks}
+    first = tasks[0]['record']
+    try:
+        for key, result in evaluate_budgets(data, first['pair_id'], first['basis'],
+                                             first['variant'], pending, config):
+            task = pending.pop(key)
+            yield task['stem'], {**task['record'], **result}
+    except (ResourceLimit, MemoryError) as exc:
+        error = {'status': 'resource_limited', 'reason': str(exc)}
+    except Exception as exc:
+        error = {'status': 'implementation_error', 'reason': repr(exc),
+                 'traceback': traceback.format_exc()}
+    else:
+        return
+    for task in pending.values():
+        yield task['stem'], {**task['record'], **error}
+
+
 def pending_conditions(data, ids, config, out, identity):
     sizes, regular = {}, {}
     started = time.monotonic()
     for pid in ids:
-        main = [graph_at(data, 64 * pid + i) for i in range(2)]
-        controls = [graph_at(data, 64 * (pid + 400) + i) for i in range(2)]
+        main = main_graph_pair(data, pid)
+        _, controls = next(official_reliability_pairs(data, pid, config))
         # Verify the control path on every requested pair before any long task.
         # Main pairs may be nonisomorphic and are never passed to this check.
         try:
@@ -273,17 +350,17 @@ def summarize(out, config):
     for basis, variant, q, readout, p in experiment_settings(config):
         stem = f'{basis}_{variant}_q{q}_{readout}_p{p}'
         counts = Counter()
-        for pid in range(400):
+        for pid in range(PAIR_COUNT):
             path = out / 'records' / f'{stem}_pair{pid:03d}.json'
             if path.exists():
                 record = json.loads(path.read_text())
                 counts[record['status']] += 1
             else:
                 counts['not_executed'] += 1
-        assert sum(counts.values()) == 400
-        summaries.append({'setting': stem, 'denominator': 400, 'counts': dict(counts),
+        assert sum(counts.values()) == PAIR_COUNT
+        summaries.append({'setting': stem, 'denominator': PAIR_COUNT, 'counts': dict(counts),
                           'certified_detection_lower_bound': counts[DIFFERENT],
-                          'detection_upper_bound': 400 - counts[EQUAL]})
+                          'detection_upper_bound': PAIR_COUNT - counts[EQUAL]})
     atomic_json(out / 'summary.json', {
         'settings': summaries,
         'scope': 'New order-2 protocol; unresolved/resource-limited items remain in denominator. Lower-bound rankings do not establish true expressivity rankings.'})
@@ -296,13 +373,18 @@ def main(argv=None):
     parser.add_argument('--pair-ids', nargs='+', type=int)
     parser.add_argument('--out', required=True)
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--workers', type=int, help='Maximum parallel conditions; default: allowed CPU count')
+    add_device_arguments(parser)
+    parser.add_argument('--bank-cache', type=Path, help='Share exact polynomial banks across encoding runs')
+    parser.add_argument('--workers', type=int,
+                        help='Maximum parallel jobs; default: up to two per CUDA device or all eligible CPUs')
     parser.add_argument('--memory-gib', type=float,
                         help='Override the configuration total scheduler+worker RSS budget in GiB')
     parser.add_argument('--reserve-gib', type=float, default=8,
                         help='Keep this much system RAM available; default: 8 GiB')
     args = parser.parse_args(argv)
-    workers = args.workers if args.workers is not None else max(1, len(ordered_cpus()))
+    devices = selected_devices(args, parser)
+    cpus = ordered_cpus()
+    workers = worker_count(args.workers, cpus, devices)
     if workers < 1 or not math.isfinite(args.reserve_gib) or args.reserve_gib < 0:
         parser.error('Positive --workers and finite nonnegative --reserve-gib required')
     config = configuration(args.config)
@@ -313,21 +395,25 @@ def main(argv=None):
     except ValueError as exc:
         parser.error(str(exc))
     config = {**config, 'determinism': start_brec(config['seed'])}
+    config.update(device_configuration(devices, parser))
+    if args.bank_cache is not None:
+        config['bank_cache'] = str(args.bank_cache.resolve())
     config = {**config, 'scheduling': {'workers': workers, 'reserve_gib': args.reserve_gib,
                                      'memory_scope': 'parent_and_workers_rss',
-                                     'cpu_order': ordered_cpus()}}
-    ids = args.pair_ids if args.pair_ids is not None else list(range(400))
-    if not ids or len(set(ids)) != len(ids) or any(x < 0 or x >= 400 for x in ids):
+                                     'cpu_order': cpus}}
+    ids = args.pair_ids if args.pair_ids is not None else list(range(PAIR_COUNT))
+    if not ids or len(set(ids)) != len(ids) or any(x < 0 or x >= PAIR_COUNT for x in ids):
         parser.error('Distinct pair IDs in 0..399 required')
     config = {**config, 'executed_pair_ids': ids}
     data = load_brec_data(args.brec_file, config['expected_brec_sha256'])
     with run_directory(args.out, config, [args.config, args.brec_file], args.resume) as (out, identity):
-        tasks = list(pending_conditions(data, ids, config, out, identity))
+        tasks = group_conditions(list(pending_conditions(data, ids, config, out, identity)), config)
         try:
-            run_tasks(tasks, partial(condition_record, data, config), out,
+            run_tasks(tasks, partial(task_records, data, config), out,
                       workers=workers, memory_gib=config['memory_gib'],
                       reserve_gib=args.reserve_gib, seed=config['seed'],
-                      reservation_scale=config.get('memory_reservation_scale', 1.0))
+                      reservation_scale=config.get('memory_reservation_scale', 1.0),
+                      devices=devices)
         finally:
             summarize(out, config)
 
