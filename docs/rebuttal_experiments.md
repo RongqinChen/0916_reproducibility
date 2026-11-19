@@ -130,6 +130,21 @@ Layer 0 compares the original ordered-pair features with exact arithmetic. Subse
 
 Only the 32 official isomorphic BREC controls per pair are evaluated. The checks align the exact polynomial banks and the numerical features through the stopping depth for that main pair. The progress bar advances after each pair and its controls. The summary reports evaluated and newly distinguished pairs per layer, official controls passed, and the number of numerical rounds executed across the main pairs. The NPZ contains the input adjacencies and any computed numerical prefixes. The original features can be reconstructed from the adjacencies using the baseline settings in the manifest.
 
+### Ordered 4-FWL encoding on small BREC graph pairs
+
+```bash
+source ~/miniforge3/bin/activate gnn270
+export BREC_FILE=/data/BREC/brec_v3.npy
+export REBUTTAL_OUT=outputs/brec_fwl4_ordered_small_reproduction
+
+bash tools/run_rebuttal.sh fwl4-encoding --max-nodes 100 --workers 2 --preflight-only
+bash tools/run_rebuttal.sh fwl4-encoding --max-nodes 100 --workers 2
+```
+
+The node cap selects IDs `343, 348, 355, 358` from the 20 BREC pairs whose exact 3-FWL reference stabilizes with equal histograms. The run validates the dataset hash against that reference. It runs exact ordered 4-FWL on the selected candidates and evaluates the encoding and official controls on the pairs the reference distinguishes. It starts from the exact `Q=1` normalized pair and shared-pivot joint channels lifted to four coordinates. The numerical extension retains the moduli and integer precision of the 3-FWL experiment, updates all four replacement coordinates through a shared pivot, and stops at the first distinguishing prefix.
+
+The preflight checks host and cgroup memory, reserves 8 GiB, and allows 10 GiB of address space per worker. The implementation retains an `int32` orbit lookup for ordered quadruples and streams exact pivot profiles in blocks of 4,096 orbit rows. It compares weighted full-row multisets over all ordered quadruples. The 32 official controls per eligible pair check the prefix through that pair's stopping depth. The summary records reference membership, the layers actually used, official control counts, and peak worker RSS.
+
 ### Reuse across tuple orders
 
 `bash tools/run_rebuttal.sh budget-extend` runs the pair and triple supplements with a shared cache at `$REBUTTAL_OUT/polynomial_banks`. Add `--device cuda:0` to use CUDA in both stages. When running `brec` and `triple-encodings` individually, pass the same `--bank-cache DIRECTORY` to both. Entries use the labeled adjacency and basis as their key. For a regular graph evaluated with exact rationals in the pair experiment, the triple experiment reads the same integer polynomial numerators and extends them if it needs a larger Q. The pair interval path retains its configured precisions, and the triple experiment generates its exact numerators for those graphs.
