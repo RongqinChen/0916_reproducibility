@@ -1,10 +1,9 @@
 """Memory-bounded ordered 4-FWL encoding on small BREC candidates."""
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 import json
 from math import lcm
-from multiprocessing import get_context
 from pathlib import Path
 import resource
 from time import perf_counter
@@ -22,17 +21,18 @@ from .fwl2_encoding import _progressive_summary
 from .fwl2_progressive import check_control as check_polynomial_banks
 from .suite_data import EXPECTED_SHA256, nauty_graph
 from .suite_resources import Resources, enforce_address_space_limit
+from .fwl4_schedule import plan_quadruple_work
 from rebuttal_experiments.brec_data import (
     OFFICIAL_RELIABILITY, load_brec_data, main_graph_pair,
     official_reliability_pairs, reliability_mapping,
 )
 from rebuttal_experiments.common import atomic_json, atomic_npz, run_directory
+from rebuttal_experiments.runtime import report_phase
+from rebuttal_experiments.scheduling import run_tasks
 
 
 _DATA = None
 GIB = 2**30
-WORKER_GIB = 10
-RESERVE_GIB = 8
 PROFILE_BLOCK = 4096
 
 
@@ -97,32 +97,49 @@ def exact_four_fwl(orbits, atomic):
         occupied, colours = width, (left, right)
 
 
+@njit(cache=True, inline='always')
+def _multiply_words(a, b):
+    mask = np.uint64(0xffffffff)
+    low = (a & mask)*(b & mask)
+    middle = (a >> 32)*(b & mask)+(low >> 32)
+    carried = (a & mask)*(b >> 32)+(middle & mask)
+    high = (a >> 32)*(b >> 32)+(middle >> 32)+(carried >> 32)
+    return high, (carried << 32)+(low & mask)
+
+
 @njit(cache=True)
-def _joint_num(graph, rows, offsets, neighbours, factors):
-    result = np.zeros(len(rows), dtype=np.uint64)
+def _joint_num(graph, rows, offsets, neighbours, factors, wide):
+    result = np.empty((len(rows), 2 if wide else 1), dtype=np.uint64)
     for i, (u, v, w, z) in enumerate(rows):
         total = np.uint64(0)
         for p in range(offsets[u], offsets[u+1]):
             x = neighbours[p]
             if graph[v, x] and graph[w, x] and graph[z, x]:
                 total += factors[x]*factors[x]
-        result[i] = total*total*factors[u]*factors[v]*factors[w]*factors[z]
+        a, b = total*total, factors[u]*factors[v]*factors[w]*factors[z]
+        if wide:
+            result[i, 0], result[i, 1] = _multiply_words(a, b)
+        else:
+            result[i, 0] = a*b
     return result
 
 
-def baseline_rows(graph, rows, atomic, scale):
+def baseline_rows(graph, rows, atomic, scale, *, wide=None):
     # The nonnegative normalized pair channels and all-positive joint channel
     # can be compared by exact squares with denominators L**2 and L**8.
     degrees = graph.sum(axis=1)
     factors = (scale//np.maximum(degrees, 1)).astype(np.uint64)
-    if len(graph)**2 * int(factors.max())**8 > np.iinfo(np.uint64).max:
-        raise OverflowError('Exact Q=1 baseline numerators exceed uint64 capacity')
+    factor = int(factors.max())
+    if max((len(graph)*factor**2)**2, factor**4) > np.iinfo(np.uint64).max:
+        raise OverflowError('Exact Q=1 baseline factors exceed uint64 capacity')
+    if wide is None:
+        wide = len(graph)**2 * factor**8 > np.iinfo(np.uint64).max
     pair_features = []
     for i, j in numeric.PAIR_POSITIONS:
         u, v = rows[:, i], rows[:, j]
         pair_features.append(factors[u]*factors[v]*graph[u, v].astype(np.uint64))
     offsets = np.r_[0, np.cumsum(degrees)]
-    joint = _joint_num(graph, rows, offsets, np.nonzero(graph)[1], factors)
+    joint = _joint_num(graph, rows, offsets, np.nonzero(graph)[1], factors, wide)
     return np.column_stack((atomic, *pair_features, joint))
 
 
@@ -150,7 +167,9 @@ def _difference(rows, orbits):
 def compare_progressively(graphs, orbits, atomic, max_rounds):
     scales = [lcm(*np.maximum(graph.sum(axis=1), 1).tolist()) for graph in graphs]
     common_scale = lcm(*scales)
-    base = [baseline_rows(g, o.rows, c, common_scale)
+    factor = max(common_scale//int(np.maximum(g.sum(axis=1), 1).min()) for g in graphs)
+    wide = max(map(len, graphs))**2 * factor**8 > np.iinfo(np.uint64).max
+    base = [baseline_rows(g, o.rows, c, common_scale, wide=wide)
             for g, o, c in zip(graphs, orbits, atomic, strict=True)]
     numeric_prefixes = [None, None]
     for t in range(max_rounds+1):
@@ -166,41 +185,60 @@ def compare_progressively(graphs, orbits, atomic, max_rounds):
         if witness is not None:
             return {'different': True, 'status': 'certified_different', 'round': t,
                     'computed_rounds': t, 'baseline_denominator_scale': common_scale,
+                    'baseline_columns': base[0].shape[1],
                     'witness': witness}, numeric_prefixes
     return {'different': False, 'status': 'unresolved', 'round': None,
-            'computed_rounds': max_rounds, 'baseline_denominator_scale': common_scale}, numeric_prefixes
+            'computed_rounds': max_rounds, 'baseline_denominator_scale': common_scale,
+            'baseline_columns': base[0].shape[1]}, numeric_prefixes
 
 
-def _official_control(graphs, depth, cache):
+def _official_control(graphs, depth, cache, *, reuse_prefix=False):
     first, second = graphs
     mapping = reliability_mapping(first, second)
     check_polynomial_banks(first, second, np.argsort(mapping), q=1, basis='monomial', depth=0)
     if not depth:
-        return
+        return 'baseline'
     order = np.asarray(pynauty.canon_label(nauty_graph(first)))
     canonical = first[np.ix_(order, order)]
-    key = canonical.tobytes()
+    key = canonical.tobytes(), depth
     if key not in cache:
         # Keep only the current topology resident. Numerical channels on the
         # two official inputs are computed independently.
         cache.clear()
-        cache[key] = numeric.quadruple_orbits(canonical)
-    orbit = cache[key]
+        cache[key] = (numeric.quadruple_orbits(canonical), None)
+    orbit, checked = cache[key]
+    input_orders = (order, mapping[order])
+    if checked is not None:
+        # An independently contracted pair established the common prefix.
+        # Verify both actual inputs give exactly the same seed on the same orbit
+        # layout before reusing that deterministic contraction.
+        for graph, indices in zip(graphs, input_orders, strict=True):
+            for start in range(0, len(orbit.rows), 65536):
+                stop = start+65536
+                initial = numeric.atomic_types(graph, indices[orbit.rows[start:stop]])
+                if not np.array_equal(initial, checked[start:stop, 0]):
+                    raise AssertionError('Official control seed differs from its cached prefix')
+        return 'reused_prefix'
     prefixes = []
-    for graph, indices in zip(graphs, (order, mapping[order]), strict=True):
+    for graph, indices in zip(graphs, input_orders, strict=True):
         prefix = numeric.atomic_types(graph, indices[orbit.rows])[:, None]
         for t in range(1, depth+1):
             prefix = numeric.extend_quadruples(orbit, prefix, t)
         prefixes.append(prefix)
     if not np.array_equal(*prefixes):
         raise AssertionError('Ordered 4-FWL numerical prefix changed on an official isomorphism')
+    if reuse_prefix:
+        cache[key] = (orbit, prefixes[0])
+    return 'independent_prefix'
 
 
-def _evaluate(pid, out, max_rounds, reference3):
+def _evaluate(pid, out, max_rounds, reference3, reuse_controls=False):
     started = perf_counter()
     graphs = main_graph_pair(_DATA, pid)
+    report_phase('quadruple_orbits')
     orbits = tuple(numeric.quadruple_orbits(graph) for graph in graphs)
     atomic = tuple(numeric.atomic_types(g, o.rows) for g, o in zip(graphs, orbits, strict=True))
+    report_phase('reference_4fwl', orbit_rows=[len(o.rows) for o in orbits])
     reference4 = exact_four_fwl(orbits, atomic)
     elapsed_reference = perf_counter()-started
     print(f'4-FWL reference pair {pid}: {reference4}', flush=True)
@@ -208,6 +246,7 @@ def _evaluate(pid, out, max_rounds, reference3):
               'reference_4fwl': reference4, 'orbit_rows': [len(o.rows) for o in orbits],
               'elapsed_reference_seconds': elapsed_reference}
     if reference4['different']:
+        report_phase('progressive_encoding', reference_round=reference4['round'])
         decision, prefixes = compare_progressively(graphs, orbits, atomic, max_rounds)
         print(f"4-FWL encoding pair {pid}: {decision['status']} at layer {decision['round']}",
               flush=True)
@@ -220,20 +259,25 @@ def _evaluate(pid, out, max_rounds, reference3):
             if prefix is not None:
                 arrays[f'{side}_numerical_prefix'] = prefix
         atomic_npz(out/artifact, **arrays)
-        del orbit, orbits
+        del orbit, orbits, arrays, prefixes, prefix, atomic
         controls, cache = [], {}
+        methods = {'baseline': 0, 'independent_prefix': 0, 'reused_prefix': 0}
         for indices, control_graphs in official_reliability_pairs(
                 _DATA, pid, {'reliability_protocol': OFFICIAL_RELIABILITY}):
-            _official_control(control_graphs, decision['computed_rounds'], cache)
+            if not len(controls) % 8:
+                report_phase('official_reliability', completed=len(controls), total=32)
+            method = _official_control(control_graphs, decision['computed_rounds'], cache,
+                                       reuse_prefix=reuse_controls)
+            methods[method] += 1
             controls.append(list(indices))
             if len(controls) % 8 == 0:
                 print(f'4-FWL official controls pair {pid}: {len(controls)}/32', flush=True)
-        record.update(decision, artifact=str(artifact), official_reliability_pairs_passed=controls)
+        record.update(decision, artifact=str(artifact), official_reliability_pairs_passed=controls,
+                      official_control_methods=methods)
     else:
         record.update(status='outside_reference_cohort', official_reliability_pairs_passed=[])
     record.update(elapsed_pair_seconds=perf_counter()-started,
                   worker_peak_rss_gib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/2**20)
-    atomic_json(out/'records'/f'pair{pid:03d}.json', record)
     return record
 
 
@@ -245,8 +289,14 @@ def _warmup():
     compare_progressively((graph, graph), (orbit, orbit), (atomic, atomic), 1)
 
 
-def _limit_worker():
-    enforce_address_space_limit(WORKER_GIB)
+def _worker(task, *, out, rounds, candidates, reuse_controls):
+    pid = task['record']['pair_id']
+    enforce_address_space_limit(task['estimated_bytes']/GIB)
+    try:
+        result = _evaluate(pid, out, rounds, candidates[pid], reuse_controls)
+    except MemoryError:
+        result = {'status': 'resource_limited', 'reason': 'worker_address_space_limit'}
+    return {**task['record'], **result}
 
 
 def main(argv=None):
