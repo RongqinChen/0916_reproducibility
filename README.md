@@ -12,6 +12,45 @@ python reproduce.py brec-run --brec-file /data/BREC/brec_v3.npy --root /results/
 
 This entry point uses exact structural aggregation, complete relabeling controls, memory-bounded workers, frozen provenance, and verified resume. The existing `brec-plan` / `brec-run` / `brec-report` commands now serve this protocol. See [BREC commands and guarantees](docs/brec_suite.md) for the full experiment list and resource options. Use a new output root; historical frozen plans remain separate.
 
+## BREC pairs distinguishable by 2-FWL and 3-FWL
+
+The standard hierarchy identifies `k`-FWL with `(k + 1)`-WL. We therefore use the following naming consistently:
+
+- **2-FWL = 3-WL**
+- **3-FWL = 4-WL**
+
+The official BREC paper reports the Basic, Regular, Extension, and CFI construction levels in `k`-WL terminology. Combining those labels with the official category ranges gives:
+
+| Pair IDs | Category | 2-FWL (= 3-WL) | 3-FWL (= 4-WL) |
+|---|---|---:|---:|
+| 0-59 | Basic | Distinguishes | Distinguishes |
+| 60-109 | Simple Regular | Distinguishes | Distinguishes |
+| 110-159 | Strongly Regular | Indistinguishable | Distinguishes |
+| 160-259 | Extension | Distinguishes | Distinguishes |
+| 260-319 | CFI, 3-WL level | Distinguishes | Distinguishes |
+| 320-339 | CFI, 4-WL-only level | Indistinguishable | Distinguishes |
+| 340-359 | CFI, 4-WL-indistinguishable | Indistinguishable | Indistinguishable |
+| 360-379 | 4-Vertex Condition | Indistinguishable | Distinguishes |
+| 380-399 | Distance Regular | Indistinguishable | Distinguishes |
+
+Compact ID sets:
+
+- **2-FWL distinguishes 270 pairs:** `0-109, 160-319`.
+- **3-FWL distinguishes 380 pairs:** `0-339, 360-399`.
+- **2-FWL cannot distinguish 130 pairs:** `110-159, 320-399`.
+- **3-FWL cannot distinguish 20 pairs:** `340-359`.
+
+The additional 110 pairs gained by moving from 2-FWL to 3-FWL are:
+
+- Strongly Regular: `110-159` (50 pairs).
+- CFI requiring 4-WL: `320-339` (20 pairs).
+- 4-Vertex Condition: `360-379` (20 pairs).
+- Distance Regular: `380-399` (20 pairs).
+
+Sources: the official BREC category ranges and CFI construction levels in [An Empirical Study of Realized GNN Expressiveness](https://arxiv.org/abs/2304.07702); the official `brec_v3_3wl.npy` selection gives the 2-FWL/3-WL set, while the paper identifies the 20 4-WL-only and 20 4-WL-indistinguishable CFI pairs.
+
+These labels concern 2-FWL and 3-FWL, not the finite `Q` polynomial budget in `rebuttal_experiments/encodings.py`. An `unresolved` interval result means that the current pair encoding did not certify a decision; it does not by itself prove that 2-FWL or 3-FWL is unable to distinguish the pair.
+
 ## Running the supplementary experiments
 
 See the [supplementary experiment guide](docs/rebuttal_experiments.md) for environments, inputs, and complete commands. Each command runs only the specified task:

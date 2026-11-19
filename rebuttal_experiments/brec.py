@@ -23,8 +23,11 @@ from .readouts import (DIFFERENT, EQUAL, UNRESOLVED, exact_multiset,
                        interval_multiset, mean_decision)
 from .common import (Budget, ResourceLimit, atomic_json, configuration, hard_wall_limit,
                      permutations, run_directory)
-from .encodings import descriptors, feature_matrix, moment_blocks
+from .encodings import (descriptors, feature_matrix, moment_blocks,
+                        scaled_exact_feature_matrix)
 from .runtime import report_phase
+from .scaled_exact import (ScaledIntegerArray, scaled_array_equal,
+                           scaled_mean_decision)
 from .scheduling import (add_device_arguments, device_configuration, estimate_bytes,
                          ordered_cpus, run_tasks, selected_devices, worker_count)
 
@@ -75,7 +78,7 @@ def aligned_control(original, changed, new_to_old, mode):
     n = len(new_to_old)
     expected = original.reshape(n, n, -1)[np.ix_(new_to_old, new_to_old)].reshape(changed.shape)
     if mode == 'exact':
-        if not np.array_equal(expected, changed):
+        if not scaled_array_equal(expected, changed):
             raise AssertionError('Exact same-graph aligned features changed')
         return {'aligned_exact_equal': True}
     if mode == 'interval':
@@ -157,9 +160,14 @@ def _readout_decisions(rows, settings, columns, mode, bits, budget, config):
             if readout == 'mean':
                 while len(moments) < p:
                     moments.append(next(blocks))
-                vectors = ([value for block in side for value in block[columns[q]]]
-                           for side in zip(*moments[:p]))
-                decision = mean_decision(*vectors)
+                if (moments and
+                        all(isinstance(value, ScaledIntegerArray)
+                            for pair in moments[:p] for value in pair)):
+                    decision = scaled_mean_decision(moments[:p], columns[q])
+                else:
+                    vectors = ([value for block in side for value in block[columns[q]]]
+                               for side in zip(*moments[:p]))
+                    decision = mean_decision(*vectors)
             else:
                 projected = (row[:, columns[q]] for row in rows)
                 decision = (exact_multiset(*projected) if mode == 'exact' else
@@ -174,15 +182,15 @@ def _readout_decisions(rows, settings, columns, mode, bits, budget, config):
 
 def evaluate_budgets(data, pid, basis, variant, settings, config):
     budget = Budget(config['seconds_per_condition'], config['memory_gib'])
-    features = feature_matrix
+    report_phase('load_graphs')
+    graphs = main_graph_pair(data, pid)
+    mode = 'exact' if all(is_regular(g) for g in graphs) else 'interval'
+    features = scaled_exact_feature_matrix if mode == 'exact' else feature_matrix
     if config.get('bank_cache') is not None:
         features = partial(features, bank_cache=config['bank_cache'])
     if config.get('device', 'cpu') != 'cpu':
         from .brec_cuda import CudaProducts
         features = partial(features, accelerator=CudaProducts(config['device']))
-    report_phase('load_graphs')
-    graphs = main_graph_pair(data, pid)
-    mode = 'exact' if all(is_regular(g) for g in graphs) else 'interval'
     precisions = [None] if mode == 'exact' else config['precision_bits']
     attempts = {setting: [] for setting in settings}
     for bits in precisions:

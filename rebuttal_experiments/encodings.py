@@ -9,6 +9,7 @@ import numpy as np
 from .common import simple_adjacency
 from .intervals import Interval
 from .polynomial_banks import scaled_polynomial_bank
+from .scaled_exact import ScaledIntegerArray
 
 
 def scalar_factory(mode, bits=128):
@@ -115,6 +116,81 @@ def _regular_polynomial_bank(adjacency, q, basis, budget, accelerator, bank_cach
     return np.stack([rational(matrix, d**degree) for degree, matrix in enumerate(bank)])
 
 
+def scaled_exact_feature_matrix(adjacency, q, order, variant, basis='monomial',
+                                mode='exact', bits=128, budget=None, *,
+                                accelerator=None, bank_cache=None):
+    """Return exact feature numerators on one common integer denominator.
+
+    Regular-graph polynomial banks already use integer numerators with a known
+    per-degree power of the degree as denominator. Keeping that representation
+    avoids constructing and normalizing a Fraction object for every matrix
+    entry while preserving exactly the same rational feature values.
+    """
+    if mode != 'exact':
+        raise ValueError('Scaled exact features require exact mode')
+    del bits
+    adjacency = simple_adjacency(adjacency)
+    degrees = adjacency.sum(1)
+    if not np.all(degrees == degrees[0]):
+        raise ValueError('Rational backend is restricted to regular graphs')
+    degree = max(1, int(degrees[0]))
+    bank = scaled_polynomial_bank(
+        adjacency, [degree] * len(adjacency), q, basis, budget,
+        accelerator=accelerator, cache_directory=bank_cache)
+    keys = descriptors(q, order, variant)
+    denominator_power = 3 * q if variant == 'joint' else q
+    denominator = degree**denominator_power
+    n = len(adjacency)
+    result = np.empty((n**order, len(keys)), dtype=object)
+    coordinates = np.unravel_index(np.arange(n**order), (n,) * order)
+    column = 0
+    if budget:
+        budget.check(result.nbytes + len(keys) * n**order * 256)
+    result[:, column] = denominator
+    column += 1
+
+    positions = [(0, 1)] if order == 2 else [
+        (i, j) for i in range(3) for j in range(3) if i != j]
+    matrices = [
+        ('I', 0, bank[0]),
+        ('A', 0, adjacency),
+        *((f'B{power}', power, bank[power]) for power in range(1, q + 1)),
+    ]
+    for _, power, matrix in matrices:
+        scale = degree**(denominator_power - power)
+        for i, j in positions:
+            values = np.asarray(matrix[coordinates[i], coordinates[j]], dtype=object)
+            result[:, column] = values if scale == 1 else values * scale
+            column += 1
+
+    if variant != 'polynomial':
+        sums = [matrix.sum(1) for matrix in bank[:q + 1]]
+        for i, j in positions:
+            for a in range(q):
+                for b in range(q - a):
+                    if (a, b) == (0, 0):
+                        continue
+                    scale = degree**(denominator_power - a - b)
+                    values = sums[a][coordinates[i]] * sums[b][coordinates[j]]
+                    result[:, column] = values if scale == 1 else values * scale
+                    column += 1
+
+    if variant == 'joint':
+        for a in range(q + 1):
+            for b in range(q + 1):
+                for c in range(q + 1):
+                    scale = degree**(denominator_power - a - b - c)
+                    products = (bank[a][coordinates[0], :]
+                                * bank[b][coordinates[1], :])
+                    products = products * bank[c][coordinates[2], :]
+                    values = products.sum(axis=1)
+                    result[:, column] = values if scale == 1 else values * scale
+                    column += 1
+    if column != len(keys):
+        raise AssertionError(f'Built {column} feature columns, expected {len(keys)}')
+    return ScaledIntegerArray(result, denominator)
+
+
 def descriptors(q, order, variant):
     if order not in (2, 3) or variant not in ('polynomial', 'endpoint', 'joint'):
         raise ValueError('Invalid encoding')
@@ -189,10 +265,25 @@ def feature_matrix(adjacency, q, order, variant, basis='monomial', mode='float64
 def moments(rows, p, budget=None):
     if p < 1 or not len(rows):
         raise ValueError('Positive moment budget and a nonempty object domain are required')
+    if isinstance(rows, ScaledIntegerArray):
+        return [
+            Fraction(int(value), block.denominator)
+            for block in itertools.islice(moment_blocks(rows, budget), p)
+            for value in block
+        ]
     return list(itertools.chain.from_iterable(itertools.islice(moment_blocks(rows, budget), p)))
 
 
 def moment_blocks(rows, budget=None):
+    if isinstance(rows, ScaledIntegerArray):
+        denominator = rows.denominator
+        count = len(rows)
+        for power in itertools.count(1):
+            if budget:
+                budget.check()
+            numerator = (rows**power).sum(0)
+            yield ScaledIntegerArray(numerator, denominator**power * count)
+        return
     for power in itertools.count(1):
         if budget:
             budget.check()
