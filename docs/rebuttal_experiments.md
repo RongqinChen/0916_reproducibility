@@ -143,7 +143,19 @@ bash tools/run_rebuttal.sh fwl4-encoding --max-nodes 100 --workers 2
 
 The node cap selects IDs `343, 348, 355, 358` from the 20 BREC pairs whose exact 3-FWL reference stabilizes with equal histograms. The command reads `outputs/brec_fwl3_reference_340_359.json` by default and validates its dataset hash. Pass `--reference-3fwl PATH` if the audit is stored elsewhere. It runs exact ordered 4-FWL on the selected candidates and evaluates the encoding and official controls on the pairs the reference distinguishes. It starts from the exact `Q=1` normalized pair and shared-pivot joint channels lifted to four coordinates. The numerical extension retains the moduli and integer precision of the 3-FWL experiment, updates all four replacement coordinates through a shared pivot, and stops at the first distinguishing prefix.
 
-The preflight checks host and cgroup memory, reserves 8 GiB, and allows 10 GiB of address space per worker. The implementation retains an `int32` orbit lookup for ordered quadruples and streams exact pivot profiles in blocks of 4,096 orbit rows. It compares weighted full-row multisets over all ordered quadruples. The 32 official controls per eligible pair check the prefix through that pair's stopping depth. The summary records reference membership, the layers actually used, official control counts, and peak worker RSS.
+The preflight checks available host and cgroup memory and estimates a reservation for each pair. `--memory-gib` sets the aggregate RSS budget, and `--reserve-gib` keeps memory available to the host. The scheduler starts jobs as their reservations fit and caps each worker's address space at its reservation. The implementation retains an `int32` orbit lookup for ordered quadruples and streams exact pivot profiles in blocks of 4,096 orbit rows. It compares weighted full-row multisets over all ordered quadruples. The 32 official controls per eligible pair check the prefix through that pair's stopping depth. The summary records reference membership, the layers actually used, official control counts, and peak worker RSS.
+
+Use an unused output directory for the 16 larger pairs. Pair selection leaves the four previously completed small pairs out of this run.
+
+```bash
+export REBUTTAL_OUT=outputs/brec_fwl4_remaining_58g
+bash tools/run_rebuttal.sh fwl4-encoding \
+  --max-nodes 198 \
+  --pair-ids 340 341 342 344 345 346 347 349 350 351 352 353 354 356 357 359 \
+  --memory-gib 58 --reserve-gib 2 --workers 16
+```
+
+Add `--preflight-only` to print the selected pairs and reservations without running the experiment. After an interruption, use the same command with `--resume` to retain completed pair records.
 
 ### Reuse across tuple orders
 

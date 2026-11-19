@@ -69,3 +69,15 @@ class QuadrupleEncodingTests(unittest.TestCase):
             for vertex in row:
                 denominator *= degrees[vertex]
             self.assertEqual(Fraction(int(packed[-1]), scale**8), total**2/denominator)
+
+    def test_wider_joint_numerator_preserves_the_exact_feature(self):
+        narrow_scale = lcm(*self.graph.sum(axis=1).tolist())
+        wide_scale = 3060
+        narrow = baseline_rows(self.graph, self.orbit.rows, self.initial, narrow_scale)
+        wide = baseline_rows(self.graph, self.orbit.rows, self.initial, wide_scale)
+        self.assertEqual(wide.shape[1], narrow.shape[1]+1)
+        self.assertTrue(np.any(wide[:, -2]))
+        for narrow_row, wide_row in zip(narrow, wide, strict=True):
+            value = (int(wide_row[-2]) << 64) | int(wide_row[-1])
+            self.assertEqual(Fraction(value, wide_scale**8),
+                             Fraction(int(narrow_row[-1]), narrow_scale**8))

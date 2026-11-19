@@ -3,7 +3,7 @@
 import argparse
 from functools import partial
 import json
-from math import lcm
+from math import isfinite, lcm
 from pathlib import Path
 import resource
 from time import perf_counter
@@ -192,47 +192,32 @@ def compare_progressively(graphs, orbits, atomic, max_rounds):
             'baseline_columns': base[0].shape[1]}, numeric_prefixes
 
 
-def _official_control(graphs, depth, cache, *, reuse_prefix=False):
+def _official_control(graphs, depth, cache):
     first, second = graphs
     mapping = reliability_mapping(first, second)
     check_polynomial_banks(first, second, np.argsort(mapping), q=1, basis='monomial', depth=0)
     if not depth:
-        return 'baseline'
+        return
     order = np.asarray(pynauty.canon_label(nauty_graph(first)))
     canonical = first[np.ix_(order, order)]
-    key = canonical.tobytes(), depth
+    key = canonical.tobytes()
     if key not in cache:
         # Keep only the current topology resident. Numerical channels on the
         # two official inputs are computed independently.
         cache.clear()
-        cache[key] = (numeric.quadruple_orbits(canonical), None)
-    orbit, checked = cache[key]
-    input_orders = (order, mapping[order])
-    if checked is not None:
-        # An independently contracted pair established the common prefix.
-        # Verify both actual inputs give exactly the same seed on the same orbit
-        # layout before reusing that deterministic contraction.
-        for graph, indices in zip(graphs, input_orders, strict=True):
-            for start in range(0, len(orbit.rows), 65536):
-                stop = start+65536
-                initial = numeric.atomic_types(graph, indices[orbit.rows[start:stop]])
-                if not np.array_equal(initial, checked[start:stop, 0]):
-                    raise AssertionError('Official control seed differs from its cached prefix')
-        return 'reused_prefix'
+        cache[key] = numeric.quadruple_orbits(canonical)
+    orbit = cache[key]
     prefixes = []
-    for graph, indices in zip(graphs, input_orders, strict=True):
+    for graph, indices in zip(graphs, (order, mapping[order]), strict=True):
         prefix = numeric.atomic_types(graph, indices[orbit.rows])[:, None]
         for t in range(1, depth+1):
             prefix = numeric.extend_quadruples(orbit, prefix, t)
         prefixes.append(prefix)
     if not np.array_equal(*prefixes):
         raise AssertionError('Ordered 4-FWL numerical prefix changed on an official isomorphism')
-    if reuse_prefix:
-        cache[key] = (orbit, prefixes[0])
-    return 'independent_prefix'
 
 
-def _evaluate(pid, out, max_rounds, reference3, reuse_controls=False):
+def _evaluate(pid, out, max_rounds, reference3):
     started = perf_counter()
     graphs = main_graph_pair(_DATA, pid)
     report_phase('quadruple_orbits')
@@ -261,19 +246,15 @@ def _evaluate(pid, out, max_rounds, reference3, reuse_controls=False):
         atomic_npz(out/artifact, **arrays)
         del orbit, orbits, arrays, prefixes, prefix, atomic
         controls, cache = [], {}
-        methods = {'baseline': 0, 'independent_prefix': 0, 'reused_prefix': 0}
         for indices, control_graphs in official_reliability_pairs(
                 _DATA, pid, {'reliability_protocol': OFFICIAL_RELIABILITY}):
             if not len(controls) % 8:
                 report_phase('official_reliability', completed=len(controls), total=32)
-            method = _official_control(control_graphs, decision['computed_rounds'], cache,
-                                       reuse_prefix=reuse_controls)
-            methods[method] += 1
+            _official_control(control_graphs, decision['computed_rounds'], cache)
             controls.append(list(indices))
             if len(controls) % 8 == 0:
                 print(f'4-FWL official controls pair {pid}: {len(controls)}/32', flush=True)
-        record.update(decision, artifact=str(artifact), official_reliability_pairs_passed=controls,
-                      official_control_methods=methods)
+        record.update(decision, artifact=str(artifact), official_reliability_pairs_passed=controls)
     else:
         record.update(status='outside_reference_cohort', official_reliability_pairs_passed=[])
     record.update(elapsed_pair_seconds=perf_counter()-started,
@@ -289,11 +270,11 @@ def _warmup():
     compare_progressively((graph, graph), (orbit, orbit), (atomic, atomic), 1)
 
 
-def _worker(task, *, out, rounds, candidates, reuse_controls):
+def _worker(task, *, out, rounds, candidates):
     pid = task['record']['pair_id']
     enforce_address_space_limit(task['estimated_bytes']/GIB)
     try:
-        result = _evaluate(pid, out, rounds, candidates[pid], reuse_controls)
+        result = _evaluate(pid, out, rounds, candidates[pid])
     except MemoryError:
         result = {'status': 'resource_limited', 'reason': 'worker_address_space_limit'}
     return {**task['record'], **result}
@@ -308,12 +289,21 @@ def main(argv=None):
     parser.add_argument('--reference-3fwl', type=Path,
                         default=Path('outputs/brec_fwl3_reference_340_359.json'))
     parser.add_argument('--max-nodes', type=int, default=100)
+    parser.add_argument('--pair-ids', nargs='+', type=int)
     parser.add_argument('--workers', type=int, default=2)
+    parser.add_argument('--memory-gib', type=float, default=58,
+                        help='Aggregate experiment RSS budget in GiB')
+    parser.add_argument('--reserve-gib', type=float, default=2,
+                        help='Minimum memory kept available to the host')
     parser.add_argument('--numerical-rounds', type=int, default=10)
+    parser.add_argument('--resume', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     args = parser.parse_args(argv)
-    if not 1 <= args.max_nodes <= 100 or args.workers < 1 or args.numerical_rounds < 0:
-        parser.error('Use a positive node cap up to 100, positive workers, and nonnegative depth')
+    if not 1 <= args.max_nodes <= 215 or args.workers < 1 or args.numerical_rounds < 0:
+        parser.error('Use a positive node cap up to 215, positive workers, and nonnegative depth')
+    if (not isfinite(args.memory_gib) or args.memory_gib <= 0
+            or not isfinite(args.reserve_gib) or args.reserve_gib < 0):
+        parser.error('The aggregate memory budget must be positive and the reserve nonnegative')
     reference = json.loads(args.reference_3fwl.read_text())
     if reference['dataset_sha256'] != EXPECTED_SHA256:
         parser.error('The 3-FWL reference must match the official input')
@@ -322,57 +312,90 @@ def main(argv=None):
                   and r['reference_3fwl'].get('stable_after_round') is not None}
     if set(candidates) != set(range(340, 360)):
         parser.error('Expected exact stable 3-FWL reference records for IDs 340–359')
+    selected = sorted(args.pair_ids if args.pair_ids is not None else candidates)
+    if not set(selected) <= candidates.keys() or len(set(selected)) != len(selected):
+        parser.error('Choose distinct pair IDs in the 3-FWL-indistinguishable cohort')
     global _DATA
     _DATA = load_brec_data(args.brec_file, EXPECTED_SHA256)
-    sizes = {pid: max(map(len, main_graph_pair(_DATA, pid))) for pid in candidates}
-    sizes = {pid: n for pid, n in sizes.items() if n <= args.max_nodes}
+    sizes, plans = {}, {}
+    for pid in selected:
+        graphs = main_graph_pair(_DATA, pid)
+        n = max(map(len, graphs))
+        if n > args.max_nodes:
+            if args.pair_ids is not None:
+                parser.error(f'Pair {pid} has {n} vertices and exceeds the node cap')
+            continue
+        sizes[pid] = n
+        plans[pid] = plan_quadruple_work(graphs, args.numerical_rounds)
     if not sizes:
         parser.error('No 3-FWL-indistinguishable candidates within the node cap')
     resources = Resources()
     available = resources.memory_available()/GIB
-    workers = min(len(sizes), args.workers, resources.cpus(), int((available-RESERVE_GIB)//WORKER_GIB))
-    if workers < 1:
-        parser.error(f'Only {available:.2f} GiB available, need {WORKER_GIB+RESERVE_GIB} GiB')
-    print(f'4-FWL preflight: {available:.2f} GiB available, {RESERVE_GIB} GiB reserve, '
-          f'{WORKER_GIB} GiB address-space cap × {workers} workers', flush=True)
+    workers = min(len(sizes), args.workers, resources.cpus())
+    print(f'4-FWL preflight: {available:.2f} GiB available, {args.memory_gib:g} GiB aggregate cap, '
+          f'{args.reserve_gib:g} GiB host reserve, up to {workers} worker slots', flush=True)
     for pid, nodes in sorted(sizes.items()):
-        print(f'  pair {pid}: {nodes} nodes, two int32 orbit tables <= {8*nodes**4/GIB:.2f} GiB',
+        plan = plans[pid]
+        print(f"  pair {pid}: {nodes} nodes, {plan['estimated_bytes']/GIB:g} GiB reservation, "
+              f"two int32 orbit tables {plan['lookup_bytes']/GIB:.2f} GiB",
               flush=True)
     if args.preflight_only:
         return
     config = {'encoding': 'progressive_4fwl_ordered_quadruples', 'baseline': 'monomial_joint_q1',
-              'node_cap': args.max_nodes, 'nodes_by_pair': sizes, 'workers': workers,
-              'max_numerical_rounds': args.numerical_rounds, 'moduli': numeric.MODULI,
-              'profile_block_rows': PROFILE_BLOCK, 'worker_address_space_gib': WORKER_GIB,
-              'reserve_gib': RESERVE_GIB, 'preflight_available_gib': available,
+              'node_cap': args.max_nodes, 'nodes_by_pair': {str(pid): n for pid, n in sizes.items()},
+              'workers': workers, 'max_numerical_rounds': args.numerical_rounds,
+              'moduli': list(numeric.MODULI),
+              'profile_block_rows': PROFILE_BLOCK, 'memory_gib': args.memory_gib,
+              'reserve_gib': args.reserve_gib,
+              'pair_memory_plans': {str(pid): plan for pid, plan in plans.items()},
+              'expected_brec_sha256': EXPECTED_SHA256,
               'reliability_protocol': OFFICIAL_RELIABILITY, 'numba_version': numeric.NUMBA_VERSION}
     inputs = [args.brec_file, args.reference_3fwl, Path(__file__), Path(numeric.__file__)]
     inputs.extend(Path(__file__).with_name(name) for name in
-                  ('fwl2_encoding.py', 'fwl2_progressive.py', 'fwl3_numeric.py',
+                  ('fwl4_schedule.py', 'fwl2_encoding.py', 'fwl2_progressive.py', 'fwl3_numeric.py',
                    'fwl2_numeric.py', 'suite_data.py', 'suite_resources.py'))
-    with run_directory(args.out, config, inputs) as (out, identity):
-        _warmup()
+    with run_directory(args.out, config, inputs, resume=args.resume) as (out, identity):
         records = []
-        scheduled = sorted(sizes, key=sizes.get, reverse=True)
-        with ProcessPoolExecutor(max_workers=workers, mp_context=get_context('fork'),
-                                 initializer=_limit_worker) as executor:
-            jobs = [executor.submit(_evaluate, pid, out, args.numerical_rounds, candidates[pid])
-                    for pid in scheduled]
-            for job in as_completed(jobs):
-                records.append(job.result())
-                n = len(records)
-                bar = '='*(20*n//len(sizes))
-                print(f'4-FWL encoding [{bar:.<20}] {n}/{len(sizes)} candidates', flush=True)
+        tasks = []
+        for pid, plan in plans.items():
+            stem = f'pair{pid:03d}'
+            path = out/'records'/f'{stem}.json'
+            record = {'pair_id': pid, 'vertices': sizes[pid], 'identity_sha256': identity}
+            if args.resume and path.is_file():
+                previous = json.loads(path.read_text())
+                if any(previous.get(k) != v for k, v in record.items()):
+                    raise ValueError(f'{path}: run identity differs')
+                if previous['status'] in ('outside_reference_cohort', 'certified_different', 'unresolved'):
+                    if 'artifact' in previous and not (out/previous['artifact']).is_file():
+                        raise ValueError(f"{path}: missing encoding artifact")
+                    records.append(previous)
+                    continue
+                path.unlink()
+            tasks.append({**plan, 'stem': stem, 'record': record})
+
+        def progress(_, result):
+            records.append(result)
+            n = len(records)
+            bar = '='*(20*n//len(sizes))
+            print(f'4-FWL encoding [{bar:.<20}] {n}/{len(sizes)} candidates', flush=True)
+
+        if tasks:
+            _warmup()
+            worker = partial(_worker, out=out, rounds=args.numerical_rounds, candidates=candidates)
+            run_tasks(tasks, worker, out, workers=workers, memory_gib=args.memory_gib,
+                      reserve_gib=args.reserve_gib, seed=0, on_result=progress)
         records.sort(key=lambda row: row['pair_id'])
-        target = [row for row in records if row['reference_4fwl']['different']]
+        target = [row for row in records if row.get('reference_4fwl', {}).get('different')]
         summary = {'identity_sha256': identity, 'candidate_ids': sorted(sizes),
                    'target_pair_ids': [row['pair_id'] for row in target], 'records': records,
                    'different': sum(row['different'] for row in target),
-                   'outside_reference_cohort': [r['pair_id'] for r in records if r not in target],
-                   'official_reliability_pairs_passed': sum(len(r['official_reliability_pairs_passed'])
+                   'outside_reference_cohort': [r['pair_id'] for r in records
+                                                if r['status']=='outside_reference_cohort'],
+                   'resource_limited': [r['pair_id'] for r in records if r['status']=='resource_limited'],
+                   'official_reliability_pairs_passed': sum(len(r.get('official_reliability_pairs_passed', []))
                                                            for r in records),
                    **_progressive_summary(target, args.numerical_rounds),
-                   'peak_worker_rss_gib': max(r['worker_peak_rss_gib'] for r in records),
+                   'peak_worker_rss_gib': max((r.get('worker_peak_rss_gib', 0) for r in records), default=0),
                    'wall_seconds_through_computation': perf_counter()-started}
         atomic_json(out/'summary.json', summary)
 
