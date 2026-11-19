@@ -97,6 +97,39 @@ CUDA computes the sparse adjacency products in the polynomial recurrence with mu
 
 Use the same pair subset and worker count on CPU and CUDA to measure elapsed time. The speedup depends on graph sizes and the fraction of runtime spent in polynomial products. `--memory-gib` covers host RAM, and `--workers` limits concurrent CUDA contexts on the selected device.
 
+### Exact 2-FWL pair-colour encoding
+
+```bash
+BREC_FILE=/data/BREC/brec_v3.npy REBUTTAL_OUT=outputs/pair_colours \
+  bash tools/run_rebuttal.sh fwl2-encoding --pair-ids 260 261 262 --workers 3
+```
+
+The encoding refines ordered-pair colours to stability using the joint colours through a shared vertex. Each graph has its own canonical colour dictionaries. Together with the dictionaries, the colour counts are comparable across graphs. Local colour IDs index their graph's dictionary.
+
+Each NPZ file stores the two stable pair-colour matrices, round dictionaries and exact multiplicities. The JSON record gives the first differing colour count and the checks for all 32 official BREC reliability pairs. The command uses CPU integer sorting and shows per-pair progress.
+
+### Numerical 2-FWL pair encoding
+
+Use `fwl2-encoding --numerical-rounds 5` for the fixed-width numerical variant. Each round applies two pointwise polynomials to the previous pair matrix and multiplies the transformed matrices across their shared pivot. The result is added to the previous state in each of two modular integer channels. Every graph uses the same constants and can be encoded independently.
+
+The output contains the initial pair-type channel and the two channels from each round. Five rounds give 11 channels. Choose a common depth for the graphs being compared. The `extend_numeric_pairs` API appends further rounds to saved features using the last state. The readout compares exact multisets of numerical rows and records the earliest distinguishing prefix. The official BREC reliability checks compare the aligned numerical tensors.
+
+At round `t`, each numerical state is a function of the exact round-`t` 2-FWL colour. The initial state records the pair type. The two input states at each pivot are determined by the corresponding colours, so their contracted sum is determined by the joint colour counts. A distinction in the numerical rows therefore implies a 2-FWL distinction. Modular features can merge distinct colours, and a finite depth bounds the refinement, so measured coverage refers to the evaluated cohort and depth.
+
+### Progressive 2-FWL pair encoding
+
+```bash
+source ~/miniforge3/bin/activate gnn270
+BREC_FILE=/data/BREC/brec_v3.npy REBUTTAL_OUT=outputs/brec_fwl2_progressive \
+  bash tools/run_rebuttal.sh fwl2-encoding --full --workers 20
+```
+
+`--full` selects the 270 pairs that standard 2-FWL distinguishes (IDs `0–109, 160–319`). For a subset, use `--progressive --pair-ids ...`. The defaults are `--base-q 16 --basis monomial --variant endpoint --numerical-rounds 5`.
+
+Layer 0 compares the original ordered-pair features with exact arithmetic. Subsequent layers retain those features and append two numerical channels to the same rows. Channels from the last layer are reused in the next contraction. A difference in the full row multiset persists at every higher layer because projecting the higher-layer rows recovers the earlier multiset. The experiment stops at the first difference or records `unresolved` at the depth limit.
+
+Only the 32 official isomorphic BREC controls per pair are evaluated. The checks align the exact polynomial banks and the numerical features through the stopping depth for that main pair. The progress bar advances after each pair and its controls. The summary reports evaluated and newly distinguished pairs per layer, official controls passed, and the number of numerical rounds executed across the main pairs. The NPZ contains the input adjacencies and any computed numerical prefixes. The original features can be reconstructed from the adjacencies using the baseline settings in the manifest.
+
 ### Reuse across tuple orders
 
 `bash tools/run_rebuttal.sh budget-extend` runs the pair and triple supplements with a shared cache at `$REBUTTAL_OUT/polynomial_banks`. Add `--device cuda:0` to use CUDA in both stages. When running `brec` and `triple-encodings` individually, pass the same `--bank-cache DIRECTORY` to both. Entries use the labeled adjacency and basis as their key. For a regular graph evaluated with exact rationals in the pair experiment, the triple experiment reads the same integer polynomial numerators and extends them if it needs a larger Q. The pair interval path retains its configured precisions, and the triple experiment generates its exact numerators for those graphs.
