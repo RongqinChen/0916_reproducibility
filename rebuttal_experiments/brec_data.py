@@ -9,20 +9,6 @@ PAIR_COUNT = 400
 RELABELS_PER_SIDE = 32
 BLOCK_SIZE = 2 * RELABELS_PER_SIDE
 GRAPH_COUNT = 2 * PAIR_COUNT * BLOCK_SIZE
-OFFICIAL_RELIABILITY = 'brec_official'
-
-
-def validate_reliability_configuration(config):
-    protocol = config.get('reliability_protocol', 'sampled')
-    if protocol not in ('sampled', OFFICIAL_RELIABILITY):
-        raise ValueError('reliability_protocol must be sampled or brec_official')
-    for key, minimum in (('relabels', 1), ('reliability_relabels', 0)):
-        if protocol == OFFICIAL_RELIABILITY:
-            value = config.get(key, 0)
-            if type(value) is not int or value != 0:
-                raise ValueError(f'{key} must be zero for brec_official reliability')
-        elif type(config.get(key)) is not int or config[key] < minimum:
-            raise ValueError(f'{key} must be an integer >= {minimum}')
 
 
 def load_brec_data(path, expected_sha256):
@@ -45,11 +31,10 @@ def main_graph_pair(data, pid):
     return [graph_at(data, BLOCK_SIZE * pid + side) for side in (0, 1)]
 
 
-def official_reliability_pairs(data, pid, config):
+def official_reliability_pairs(data, pid):
     """Read adjacent comparisons from the official 64-graph reliability block."""
     offset = (pid + PAIR_COUNT) * BLOCK_SIZE
-    count = RELABELS_PER_SIDE if config.get('reliability_protocol') == OFFICIAL_RELIABILITY else 1
-    for pair_index in range(count):
+    for pair_index in range(RELABELS_PER_SIDE):
         first = offset + 2 * pair_index
         indices = (first, first + 1)
         yield indices, [graph_at(data, index) for index in indices]

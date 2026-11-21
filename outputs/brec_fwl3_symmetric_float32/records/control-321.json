@@ -1,0 +1,550 @@
+{
+  "checked_recursive_rounds": 6,
+  "checks": [
+    {
+      "indices": [
+        46144,
+        46145
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46146,
+        46147
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46148,
+        46149
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46150,
+        46151
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46152,
+        46153
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46154,
+        46155
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46156,
+        46157
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46158,
+        46159
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46160,
+        46161
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46162,
+        46163
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46164,
+        46165
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46166,
+        46167
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46168,
+        46169
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46170,
+        46171
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46172,
+        46173
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46174,
+        46175
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46176,
+        46177
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46178,
+        46179
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46180,
+        46181
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46182,
+        46183
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46184,
+        46185
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46186,
+        46187
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46188,
+        46189
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46190,
+        46191
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46192,
+        46193
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46194,
+        46195
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46196,
+        46197
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46198,
+        46199
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46200,
+        46201
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46202,
+        46203
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46204,
+        46205
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        46206,
+        46207
+      ],
+      "max_aligned_gap": 0.0,
+      "recursive_aligned_gaps": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "static_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    }
+  ],
+  "pair_id": 321
+}

@@ -1,6 +1,5 @@
 """Progress rendering, log preservation, resume counts and signal forwarding."""
 import io
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,61 +11,29 @@ import time
 import unittest
 from unittest.mock import patch
 
-import networkx as nx
-import numpy as np
 
-from rebuttal_experiments.common import sha256, source_identity
-from tools.rebuttal_progress import Progress, Task, describe
+from tools.rebuttal_progress import Progress, Task
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProgressTests(unittest.TestCase):
-    def test_triple_encodings_totals_and_record_poll(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root/'records').mkdir()
-            task = describe([sys.executable,'-m','rebuttal_experiments','triple-encodings',
-                             '--out',str(root),'--pair-ids','0','1'])
-            self.assertEqual(task.total,144)
-            self.assertEqual(task.completed,0)
-            (root/'records'/'condition.json').write_text('{}')
-            task.poll()
-            self.assertEqual(task.completed,1)
-            (root/'records'/'last_condition.json').write_text('{}')
-            task.finish(0)
-            self.assertEqual(task.completed,2)
-
-    def test_triple_ppgn_totals_and_scheduler_poll(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = root / 'config.json'
-            config.write_text(json.dumps({'seeds': [100, 200, 300],
-                                          'variants': ['original', 'baseline', 'joint']}))
-            task = describe([sys.executable, '-m', 'rebuttal_experiments', 'triple-ppgn',
-                             '--config', str(config), '--out', str(root), '--pair-ids', '0', '1'])
-            self.assertEqual(task.total, 18)
-            (root / 'progress.json').write_text(json.dumps({
-                'completed_records': 6, 'workers': [{}, {}], 'pending_jobs': 4}))
-            task.poll()
-            self.assertEqual(task.completed, 6)
-            self.assertIn('2 GPU workers', task.detail)
-
-    def test_brec_resume_counts_and_eta(self):
-        task = Task('BREC', 'brec', 100, 40, 'conditions')
+    def test_resume_counts_and_eta(self):
+        task = Task('Prepare', 'protein-prepare', 100, 40, 'graphs')
         output = io.StringIO()
         now = [0]
         progress = Progress(task, output, lambda: now[0])
-        self.assertTrue(task.observe('[10/60] monomial_polynomial_q2_mean_p1_pair001: certified_equal'))
+        for index in range(41, 51):
+            self.assertTrue(task.observe(f'prepared graph {index}/100'))
         now[0] = 20
         progress.refresh(force=True)
         text = output.getvalue()
-        self.assertIn('50/100 conditions 50.0%', text)
+        self.assertIn('50/100 graphs 50.0%', text)
         self.assertIn('elapsed 00:00:20', text)
         self.assertIn('ETA 00:01:40', text)
 
     def test_failure_does_not_force_completion(self):
-        task = Task('BREC', 'brec', 100, 4, 'conditions')
+        task = Task('Prepare', 'protein-prepare', 100, 4, 'conditions')
         output = io.StringIO()
         Progress(task, output).finish(7)
         self.assertEqual(task.completed, 4)
@@ -84,26 +51,12 @@ class ProgressTests(unittest.TestCase):
         graph.observe('prepared graph 21/600')
         self.assertEqual(graph.completed, 21)
 
-    def test_custom_brec_configuration_and_subset(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config = root / 'config.json'
-            config.write_text(json.dumps({'bases': ['monomial'], 'variants': ['polynomial'],
-                                           'q_values': [2, 4], 'mean_p_values': [1, 2]}))
-            (root / 'out' / 'records').mkdir(parents=True)
-            (root / 'out' / 'records' / 'existing.json').write_text('{}')
-            task = describe([sys.executable, '-u', '-m', 'rebuttal_experiments', 'brec',
-                             '--config', str(config), '--out', str(root / 'out'),
-                             '--pair-ids', '3', '4', '--workers', '2', '--resume'])
-            self.assertEqual(task.total, 12)
-            self.assertEqual(task.completed, 1)
-
     def test_interactive_bar_overwrites_one_line(self):
         class Terminal(io.StringIO):
             def isatty(self):
                 return True
         output = Terminal()
-        task = Task('BREC', 'brec', 10)
+        task = Task('Prepare', 'protein-prepare', 10)
         bar = Progress(task, output)
         bar.refresh(force=True)
         task.completed = 5
@@ -119,7 +72,7 @@ class ProgressTests(unittest.TestCase):
             def isatty(self):
                 return True
         output = Terminal()
-        task = Task('BREC', 'brec', 25600)
+        task = Task('Prepare', 'protein-prepare', 25600)
         with patch('tools.rebuttal_progress.shutil.get_terminal_size',
                    return_value=os.terminal_size((80, 24))):
             bar = Progress(task, output)
@@ -133,40 +86,6 @@ class ProgressTests(unittest.TestCase):
 
 
 class ProgressProcessTests(unittest.TestCase):
-    def test_busy_output_reports_original_writer_without_launching_another(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            out = root/'triple_encodings'
-            (out/'records').mkdir(parents=True)
-            manifest = out/'manifest.json'
-            manifest.write_text('{"status":"running","original_writer":true}\n')
-            (out/'progress.json').write_text(json.dumps({
-                'scheduler_pid':os.getpid(),'workers':[{'cpu':0}]}))
-            (out/'records'/'original.json').write_text('{}')
-            before = {p.name:p.read_bytes() for p in out.glob('*.json')}
-            sources = source_identity()
-            environment = dict(os.environ,REBUTTAL_PYTHON=sys.executable,
-                               BREC_FILE=str(root/'must_not_be_opened.npy'),REBUTTAL_OUT=str(root))
-            command = ['bash','tools/run_rebuttal.sh','triple-encodings','--workers','1']
-            with (out/'.writer.lock').open('a') as lock:
-                fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
-                for enabled in ('0','1'):
-                    for extra,code in (([],2),(['--resume'],0)):
-                        result = subprocess.run(command+extra,cwd=ROOT,
-                            env=dict(environment,REBUTTAL_PROGRESS=enabled),
-                            capture_output=True,text=True,timeout=10)
-                        self.assertEqual(result.returncode,code,result.stdout+result.stderr)
-                        self.assertIn('实验已在运行',result.stderr)
-                        self.assertIn(f'PID：{os.getpid()}',result.stderr)
-                        self.assertNotIn('Traceback',result.stderr)
-                        self.assertNotIn('FileNotFoundError',result.stderr)
-                        self.assertEqual({p.name:p.read_bytes() for p in out.glob('*.json')},before)
-                # The duplicate invocations must leave the original writer's lock intact.
-                with (out/'.writer.lock').open('rb') as probe:
-                    with self.assertRaises(BlockingIOError):
-                        fcntl.flock(probe,fcntl.LOCK_SH | fcntl.LOCK_NB)
-            self.assertEqual(source_identity(),sources)
-
     def test_disabled_progress_preserves_output_and_exit_status(self):
         result = subprocess.run([sys.executable,'-m','tools.rebuttal_progress','--no-progress','--',
             sys.executable,'-c','import sys; print("original output"); sys.exit(7)'],
@@ -235,35 +154,6 @@ class ProgressProcessTests(unittest.TestCase):
                             os.kill(pid, signal.SIGKILL)
                         except ProcessLookupError:
                             pass
-
-    def test_shell_wrapper_runs_and_resumes_real_brec(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            graph6 = nx.to_graph6_bytes(nx.cycle_graph(3), header=False).strip()
-            data = np.full(51200, graph6, dtype='S16')
-            data[1] = nx.to_graph6_bytes(nx.empty_graph(3), header=False).strip()
-            source = root / 'brec.npy'
-            np.save(source, data, allow_pickle=False)
-            config = json.loads((ROOT / 'configs/rebuttal/brec.json').read_text())
-            config.update(expected_brec_sha256=sha256(source), bases=['monomial'],
-                          variants=['polynomial'], q_values=[2], mean_p_values=[1],
-                          relabels=1, reliability_relabels=1, memory_gib=3)
-            path = root / 'config.json'
-            path.write_text(json.dumps(config))
-            environment = dict(os.environ, REBUTTAL_PYTHON=sys.executable,
-                               BREC_FILE=str(source), REBUTTAL_OUT=str(root / 'out'),
-                               REBUTTAL_PROGRESS='1')
-            command = ['bash', 'tools/run_rebuttal.sh', 'brec', '--workers', '2',
-                       '--reserve-gib', '0', '--pair-ids', '0', '--config', str(path)]
-            before = source_identity()
-            for extra in ([], ['--resume']):
-                result = subprocess.run(command + extra, cwd=ROOT, env=environment,
-                                        capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn('2/2 conditions 100.0%', result.stderr)
-                self.assertIn('finished', result.stderr)
-            self.assertEqual(len(list((root / 'out' / 'brec' / 'records').glob('*.json'))), 2)
-            self.assertEqual(source_identity(), before)
 
 
 if __name__ == '__main__':

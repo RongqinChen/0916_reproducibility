@@ -17,19 +17,6 @@ python tools/summarize_object_results.py outputs/objects/qm9 \
 
 Adjust `--workers` and `--memory-gib` to the server's resources. Use `--resume` to continue with the same code, inputs, and configuration; use a new output directory after changing the scientific settings. Loading a dataset does not replace checking the coverage of the inputs.
 
-## BREC encodings and PPGN
+## BREC encodings
 
-For pair-domain BREC with exact/interval discrimination, use `bash tools/run_rebuttal.sh brec`. The retained entry points for floating-point encodings and PPGN are:
-
-```bash
-python reproduce.py brec-plan --brec-file data/brec_v3.npy --trust-pickle --root outputs/brec_model_inputs
-python reproduce.py brec-run --root outputs/brec_model_inputs --workers 12 --memory-gib 100
-python reproduce.py brec-report --root outputs/brec_model_inputs
-
-python reproduce.py ppgn --brec-file data/brec_v3.npy --trust-pickle \
-  --out outputs/ppgn --gpus 0 1 --physical-batch 32
-```
-
-Configurations are in `configs/brec_protocol.json` and `configs/ppgn_protocol.json`, respectively. These BREC entry points continue to enforce deterministic algorithms, single-threaded numerical libraries, and fixed random seeds. PPGN fixes the physical batch size, dtype, GPU assignment, and task order, and does not change the computation path based on runtime speed or out-of-memory errors. Insufficient resources cause an explicit failure; adjust the settings and rerun.
-
-Floating-point encodings/neural outputs and exact interval discrimination are separate experiments and cannot substitute for one another. See the [protocol guide](protocols.md) for the specific channels, object domains, and readouts.
+See the [BREC float32 run guide](brec_suite.md) for the graph-pair experiments.

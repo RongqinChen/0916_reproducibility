@@ -1,10 +1,10 @@
 # Supplementary rebuttal experiments: server run guide
 
-BREC and mechanism experiments use protocol `rebuttal-2026-11-12-v2`; TU uses `gnnplus-gine-tu-structural-edge-v1`. The code is organized around experiment computations, execution workflows, and result summaries. Previous experiment results are not bundled. `mechanisms` has completed on the server: the exact base/joint multiset comparisons and the third-moment difference of 1/331776 under a change of basis agree with theory. Full BREC and protein prediction runs remain pending.
+The mechanism experiments use `rebuttal-2026-11-12-v2`. TU uses `gnnplus-gine-tu-structural-edge-v1`. The code is organized around experiment computations, execution workflows, and result summaries. Previous experiment results are not bundled. `mechanisms` has completed on the server: the exact base/joint multiset comparisons and the third-moment difference of 1/331776 under a change of basis agree with theory.
 
 ## Environments and inputs
 
-Run BREC and exact mechanism experiments on Linux with Python 3.12, from this repository's root:
+Run the exact mechanism experiments on Linux with Python 3.12, from this repository's root:
 
 ```bash
 python -m venv .venv-rebuttal
@@ -12,10 +12,9 @@ source .venv-rebuttal/bin/activate
 python -m pip install -r requirements/rebuttal.txt
 
 export REBUTTAL_OUT=outputs/rebuttal
-export BREC_FILE=/server/data/BREC/brec_v3.npy
 ```
 
-Replace the input paths with their actual locations. BREC uses the official array of 51,200 graph6 entries, with its SHA-256 pinned in the configuration. TU experiments use the original Co-Sparsify environment and PyG loader described below. Install and run them in that environment, separately from BREC; missing data is handled by the original loader's download behavior.
+Replace the input paths with their actual locations. TU experiments use the original Co-Sparsify environment and PyG loader described below. Install and run them in that environment, separately from BREC; missing data is handled by the original loader's download behavior.
 
 Each experiment writes to a new directory by default and refuses to overwrite existing output. `--resume` checks the data, configuration, core computation code, and environment while preserving completed records. Removing unused supplementary modules or reorganizing entry points alone does not require recomputation. Original record identities are preserved; the current source inventory is recorded separately in the run manifest.
 
@@ -25,165 +24,18 @@ Each experiment writes to a new directory by default and refuses to overwrite ex
 |---|---|---|
 | 1. joint and mean moments | `mechanisms` | Whether raw-feature discrimination and readout discrimination differ for the rook/Shrikhande graphs |
 | 2. Change of basis and readouts | The same `mechanisms` command | Whether an information-preserving change of basis can improve mean-moment discrimination at Q=1, P=3 |
-| 3. BREC | `brec` | Certifying pair-encoding differences with exact/interval computations while retaining unresolved cases |
+| 3. BREC | `brec` | Float32 structural discrimination at the fixed threshold of \(10^{-8}\) |
 | 4. Protein prediction | `protein-run/report` | Whether joint changes prediction performance at matching input widths and training budgets |
 
 Run the experiments you need individually; these commands do not launch all tasks automatically:
 
 ```bash
 bash tools/run_rebuttal.sh mechanisms
-bash tools/run_rebuttal.sh brec
 ```
 
 ## BREC computations and results
 
-`configs/rebuttal/brec.json` fixes two bases, polynomial/endpoint encodings, Q=2/4/8/16, and full-multiset or cumulative mean-moment readouts with P=1/2/4, for 64 pair-domain settings. Exact fractions are used when both graphs are regular; other cases use 128→256→512-bit intervals generated from integer adjacency matrices. The interval backend uses arbitrary-precision integer endpoints, with no Arb dependency and no wrapping of already-rounded floating-point features.
-
-Mean-moment discrimination is reported only when a difference interval excludes 0. Full-multiset differences are certified by projection counts or a compatible-matching deficit. Overlapping intervals or a compatible perfect matching do not prove equality and are recorded as unresolved. The standalone default configuration uses 8 fixed relabelings per side, the first official reliability pair, and 2 further permutations of its first graph. Graph isomorphism aligns known isomorphic controls.
-
-With `seconds_per_condition: null`, readouts for the same pair, basis, and variant share feature matrices up to the largest Q still pending at each precision. Lower Q settings select their columns by channel descriptor in the original order. The mean readouts take the requested channel subset and moment prefix from the shared accumulation. Conditions that stop at the same precision share the relabeling and reliability checks on their combined channels. A finite wall limit schedules each condition independently so each starts with its own time budget.
-
-By default, workers run in parallel according to the available CPU count, with single-threaded numerical libraries in each process. CPU affinity reuses the physical-core-first ordering in `brec/schedule.py`. The `memory_gib: 52` setting is the total RSS budget for the scheduler and all workers. The scheduler admits tasks based on estimated memory, monitors actual RSS, and reserves 8 GiB of available system memory by default. Shared pages may be counted more than once in RSS, making this accounting conservative. Under memory pressure, a grouped task may split into independent conditions. When the scheduler stops an individual condition for exceeding its RAM policy, it records `resource_limited / scheduler_memory_limit`. Results are saved atomically per condition, interruptions clean up workers, and `--resume` skips existing records and continues unfinished conditions.
-
-There is no per-condition time limit (`seconds_per_condition: null`); the compatible-matching edge limit remains 2 million. To impose a time limit, set `seconds_per_condition` to a positive number of seconds. Fix resource settings according to the server's capacity before producing formal results. Use a new output directory after changing the code, configuration, or concurrency settings. Processes already running continue to use the settings read at startup.
-
-For example, limit execution to 28 workers while retaining the total memory budget of 52 GiB:
-
-```bash
-export REBUTTAL_OUT=outputs/rebuttal_parallel
-bash tools/run_rebuttal.sh brec --workers 28
-# Resume with the same code, configuration, and concurrency settings:
-bash tools/run_rebuttal.sh brec --workers 28 --resume
-```
-
-Alternatively, set `BREC_WORKERS=28` for either `brec` or `brec-reproduce`. Use `--reserve-gib` to adjust the amount of available system memory reserved. Outputs are:
-
-- `records/*.json`: settings, discrimination decisions, precision attempts, relabeling results, and numerical `evidence` summaries. Summaries contain distinguishing channels and differences, count bounds, or matching deficits, without repeatedly exporting full feature witnesses.
-- `summary.json`: a denominator of 400 per setting, with separate counts for certified differences, certified equalities, unresolved cases, resource-limited cases, and unexecuted cases. A larger lower bound on detected differences does not by itself establish greater true expressive power.
-- `manifest.json`: input, code, configuration, and environment identities, plus run status.
-
-Evidence summaries explain the results; they are not complete certificates that can be verified independently of the inputs. The new program covers only pair-domain BREC, not full triple/joint encodings or neural outputs. The finite triple results from `mechanisms` do not substitute for experiments in those scopes.
-
-All BREC entry points continue to fix random seeds, single-threaded numerical libraries, and strict PyTorch deterministic algorithms. The historical neural BREC workflow retains fixed physical batch sizes, dtype, and GPU assignments, with no automatic computation-path changes after out-of-memory errors. Repeated runs with the same inputs, configuration, software, and hardware are reported separately from relabeling checks.
-
-To verify repeatability, the following command runs full BREC twice, then directly compares result records and evidence summaries:
-
-```bash
-bash tools/run_rebuttal.sh brec-reproduce
-# Or compare two separately completed v2 BREC outputs:
-python -m brec.reproducibility --first outputs/brec_run1 --second outputs/brec_run2 --out outputs/brec_repeat.json
-```
-
-The comparison excludes elapsed time. Incomplete or resource-limited runs cannot pass. `passed: true` means only that records agree for the requested pair-domain BREC conditions. It does not check neural weights, guarantee agreement across platforms, or provide a mathematical proof for arbitrary relabelings.
-
-### CUDA execution
-
-Install CuPy in the same Python environment as the BREC dependencies. Select the wheel for your NVIDIA driver and CUDA version. [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html)
-
-```bash
-# Example for a server using CUDA 12
-python -m pip install 'cupy-cuda12x[ctk]'
-export BREC_FILE=/server/data/BREC/brec_v3.npy
-
-# Smoke test on a few official pairs
-REBUTTAL_OUT=outputs/brec_cuda_smoke bash tools/run_rebuttal.sh brec \
-  --device cuda:0 --workers 2 --pair-ids 0 60 140 320
-
-# Full run
-REBUTTAL_OUT=outputs/brec_cuda bash tools/run_rebuttal.sh brec --device cuda:0 --workers 2
-```
-
-CUDA computes the sparse adjacency products in the polynomial recurrence with multiword integers. Regular graphs use common-denominator numerators. Irregular graphs round each endpoint product outward on the same dyadic grid as the CPU reference. Channel construction, moment accumulation, multiset decisions, and control comparisons run on the CPU. The startup probe compares sample CUDA products with the reference, and the manifest records the device and CUDA/CuPy versions. Resume with the same device and worker settings.
-
-Use the same pair subset and worker count on CPU and CUDA to measure elapsed time. The speedup depends on graph sizes and the fraction of runtime spent in polynomial products. `--memory-gib` covers host RAM, and `--workers` limits concurrent CUDA contexts on the selected device.
-
-### Exact 2-FWL pair-colour encoding
-
-```bash
-BREC_FILE=/data/BREC/brec_v3.npy REBUTTAL_OUT=outputs/pair_colours \
-  bash tools/run_rebuttal.sh fwl2-encoding --pair-ids 260 261 262 --workers 3
-```
-
-The encoding refines ordered-pair colours to stability using the joint colours through a shared vertex. Each graph has its own canonical colour dictionaries. Together with the dictionaries, the colour counts are comparable across graphs. Local colour IDs index their graph's dictionary.
-
-Each NPZ file stores the two stable pair-colour matrices, round dictionaries and exact multiplicities. The JSON record gives the first differing colour count and the checks for all 32 official BREC reliability pairs. The command uses CPU integer sorting and shows per-pair progress.
-
-### Numerical 2-FWL pair encoding
-
-Use `fwl2-encoding --numerical-rounds 5` for the fixed-width numerical variant. Each round applies two pointwise polynomials to the previous pair matrix and multiplies the transformed matrices across their shared pivot. The result is added to the previous state in each of two modular integer channels. Every graph uses the same constants and can be encoded independently.
-
-The output contains the initial pair-type channel and the two channels from each round. Five rounds give 11 channels. Choose a common depth for the graphs being compared. The `extend_numeric_pairs` API appends further rounds to saved features using the last state. The readout compares exact multisets of numerical rows and records the earliest distinguishing prefix. The official BREC reliability checks compare the aligned numerical tensors.
-
-At round `t`, each numerical state is a function of the exact round-`t` 2-FWL colour. The initial state records the pair type. The two input states at each pivot are determined by the corresponding colours, so their contracted sum is determined by the joint colour counts. A distinction in the numerical rows therefore implies a 2-FWL distinction. Modular features can merge distinct colours, and a finite depth bounds the refinement, so measured coverage refers to the evaluated cohort and depth.
-
-### Progressive 2-FWL pair encoding
-
-```bash
-source ~/miniforge3/bin/activate gnn270
-BREC_FILE=/data/BREC/brec_v3.npy REBUTTAL_OUT=outputs/brec_fwl2_progressive \
-  bash tools/run_rebuttal.sh fwl2-encoding --full --workers 20
-```
-
-`--full` selects the 270 pairs that standard 2-FWL distinguishes (IDs `0–109, 160–319`). For a subset, use `--progressive --pair-ids ...`. The defaults are `--base-q 16 --basis monomial --variant endpoint --numerical-rounds 5`.
-
-Layer 0 compares the original ordered-pair features with exact arithmetic. Subsequent layers retain those features and append two numerical channels to the same rows. Channels from the last layer are reused in the next contraction. A difference in the full row multiset persists at every higher layer because projecting the higher-layer rows recovers the earlier multiset. The experiment stops at the first difference or records `unresolved` at the depth limit.
-
-Only the 32 official isomorphic BREC controls per pair are evaluated. The checks align the exact polynomial banks and the numerical features through the stopping depth for that main pair. The progress bar advances after each pair and its controls. The summary reports evaluated and newly distinguished pairs per layer, official controls passed, and the number of numerical rounds executed across the main pairs. The NPZ contains the input adjacencies and any computed numerical prefixes. The original features can be reconstructed from the adjacencies using the baseline settings in the manifest.
-
-### Ordered 4-FWL encoding on small BREC graph pairs
-
-```bash
-source ~/miniforge3/bin/activate gnn270
-export BREC_FILE=/data/BREC/brec_v3.npy
-export REBUTTAL_OUT=outputs/brec_fwl4_ordered_small_reproduction
-
-bash tools/run_rebuttal.sh fwl4-encoding --max-nodes 100 --workers 2 --preflight-only
-bash tools/run_rebuttal.sh fwl4-encoding --max-nodes 100 --workers 2
-```
-
-The node cap selects IDs `343, 348, 355, 358` from the 20 BREC pairs whose exact 3-FWL reference stabilizes with equal histograms. The command reads `outputs/brec_fwl3_reference_340_359.json` by default and validates its dataset hash. Pass `--reference-3fwl PATH` if the audit is stored elsewhere. It runs exact ordered 4-FWL on the selected candidates and evaluates the encoding and official controls on the pairs the reference distinguishes. It starts from the exact `Q=1` normalized pair and shared-pivot joint channels lifted to four coordinates. The numerical extension retains the moduli and integer precision of the 3-FWL experiment, updates all four replacement coordinates through a shared pivot, and stops at the first distinguishing prefix.
-
-The preflight checks available host and cgroup memory and estimates a reservation for each pair. `--memory-gib` sets the aggregate RSS budget, and `--reserve-gib` keeps memory available to the host. The scheduler starts jobs as their reservations fit and caps each worker's address space at its reservation. The implementation retains an `int32` orbit lookup for ordered quadruples and streams exact pivot profiles in blocks of 4,096 orbit rows. It compares weighted full-row multisets over all ordered quadruples. The 32 official controls per eligible pair check the prefix through that pair's stopping depth. The summary records reference membership, the layers actually used, official control counts, and peak worker RSS.
-
-Use an unused output directory for the 16 larger pairs. Pair selection leaves the four previously completed small pairs out of this run.
-
-```bash
-export REBUTTAL_OUT=outputs/brec_fwl4_remaining_58g
-bash tools/run_rebuttal.sh fwl4-encoding \
-  --max-nodes 198 \
-  --pair-ids 340 341 342 344 345 346 347 349 350 351 352 353 354 356 357 359 \
-  --memory-gib 58 --reserve-gib 2 --workers 16
-```
-
-Add `--preflight-only` to print the selected pairs and reservations without running the experiment. After an interruption, use the same command with `--resume` to retain completed pair records.
-
-### Reuse across tuple orders
-
-`bash tools/run_rebuttal.sh budget-extend` runs the pair and triple supplements with a shared cache at `$REBUTTAL_OUT/polynomial_banks`. Add `--device cuda:0` to use CUDA in both stages. When running `brec` and `triple-encodings` individually, pass the same `--bank-cache DIRECTORY` to both. Entries use the labeled adjacency and basis as their key. For a regular graph evaluated with exact rationals in the pair experiment, the triple experiment reads the same integer polynomial numerators and extends them if it needs a larger Q. The pair interval path retains its configured precisions, and the triple experiment generates its exact numerators for those graphs.
-
-The triple readout also shares a pair channel's marginal moment sums across coordinate positions. Each ordered pair occurs exactly (n) times in any two distinct positions of the full ordered triple domain. Full multiset comparisons still use complete triple rows with their original multiplicities.
-
-### Full pair and triple run
-
-Pass `--full` to run the union of the existing grids in one invocation. Each row includes both bases, both variants for that tuple order, and the full multiset readout at every Q.
-
-| Tuple order K | Q | Mean-moment P | Conditions per graph pair |
-|---|---|---|---:|
-| 2 | 2, 4, 8, 16 | 1, 2, 4, 8 | 80 |
-| 3 | 1, 2, 4 | 1, 2, 4, 8, 16 | 72 |
-| 3 | 8, 16 | 1, 2, 4, 8 | 40 |
-
-Both full configurations use the complete official reliability block for each BREC graph pair. They check all 32 adjacent pairs of same-graph relabelings stored in the 64-entry block, identified by dataset indices in the result records. The pair stage checks all aligned entries using exact equality or interval overlap. The triple stage checks all aligned bank entries and the complete feature rows of up to 16 sampled triples per comparison. BREC's neural evaluation computes a Hotelling statistic from the same reliability block. [Official BREC implementation](https://github.com/GraphPKU/BREC/blob/Release/base/test_BREC.py#L160-L219)
-
-```bash
-REBUTTAL_OUT=outputs/rebuttal_full \
-  bash tools/run_rebuttal.sh budget-extend --full \
-    --devices cuda:0 cuda:1 cuda:2 cuda:3 --workers 4
-```
-
-Each stage spreads graph-pair jobs across all four devices. With four workers, each device handles at most one active job, subject to the host memory budget. The triple joint channels use CUDA for exact integer products and degree-group sums. Canonical radical conversion, multiset checks, and power readouts use the CPU. Run with a CUDA 12.8 or newer toolkit for GeForce RTX 5090 cards. [NVIDIA CUDA compatibility matrix](https://docs.nvidia.com/datacenter/tesla/drivers/latest/cuda-toolkit-driver-and-architecture-matrix.html)
-
-All 400 pairs are selected by default, for 76,800 condition records. The run stores results in `brec/` and `triple_encodings/` under the chosen output root. Both stages use the shared polynomial bank cache. Repeat the same command with `--resume` to continue.
+The [BREC float32 run guide](brec_suite.md) lists the current experiments. Set `BREC_FILE` and run `bash tools/run_rebuttal.sh brec` for all three orders. The `fwl2-encoding`, `fwl3-encoding`, and `fwl4-encoding` commands select individual orders.
 
 ## Protein prediction
 
@@ -291,15 +143,7 @@ Completed conditions are skipped only after their experiment identities and arti
 
 ## Code reading order
 
-- BREC: `brec.py` orchestrates runs, `scheduling.py` schedules parallel tasks, `encodings.py` generates channels, and `readouts.py` performs discrimination.
+- BREC: `reproduce.py brec` runs the float32 order-specific modules described in the [run guide](brec_suite.md).
 - TU: `protein.py` calls the original entry point and saves provenance and results, `protein_encodings.py` replaces only the encodings, and `protein_report.py` summarizes original scores. The model, loader, and trainer are sourced from the external Co-Sparsify checkout.
 
 Each run's `manifest.json` records configuration, input, code, and environment identities. The repository no longer retains old result tables, static source inventories, or archive export tools.
-
-## BREC code validation
-
-```bash
-python -m unittest discover -s tests -p 'test_brec_*.py' -v
-```
-
-Tests cover rigorous interval enclosures, independent fraction formulas, both bases and all default Q budgets, cumulative mean moments, triple lifts, repeated-row matching, non-self-inverse relabelings, the official reliability mapping, parallel and repeated-run consistency, memory limits, interruption cleanup, atomic saving, and resume identities. Configuration errors are rejected before workers start. Reproducibility checks also verify condition coverage, record identities, and summary consistency. These tests use small graphs and do not replace running and reviewing all formal BREC conditions.

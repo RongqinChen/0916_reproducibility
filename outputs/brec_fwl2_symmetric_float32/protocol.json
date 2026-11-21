@@ -1,0 +1,14 @@
+{
+  "branch_degrees": [
+    769,
+    997
+  ],
+  "contraction": "sum of shared-pivot products",
+  "dataset_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "dtype": "float32",
+  "readout": "maximum per-channel sorted difference",
+  "reproducible_dot_fraction_bits": 40,
+  "rounds": 6,
+  "threshold": 1e-08,
+  "walk_degree": 24
+}

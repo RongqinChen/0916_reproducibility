@@ -1,0 +1,34 @@
+{
+  "added_by_recursion": 25,
+  "branch_degrees": [
+    769,
+    997,
+    1237
+  ],
+  "carrier": "mean of two successive Walk powers, applied to the first two positions",
+  "complete_different": 110,
+  "controls": "all static channels and all recursive rounds",
+  "dataset_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "dtype": "float32",
+  "first_added_by_round": {
+    "1": 1,
+    "2": 4,
+    "3": 13,
+    "4": 7
+  },
+  "float32_pivot_sum_fraction_bits": 39,
+  "minimum_positive_gap": 6.117625162005424e-08,
+  "readout": "maximum per-channel sorted difference",
+  "reference_equal": 20,
+  "reference_equal_marked_different": [],
+  "reference_positive": 110,
+  "rounds": 6,
+  "static_channels": 20,
+  "static_different": 85,
+  "static_joint_degree": 4,
+  "tested_pairs": 130,
+  "threshold": 1e-08,
+  "unresolved_positive_ids": [],
+  "walk_degree": 24,
+  "walk_different": 0
+}

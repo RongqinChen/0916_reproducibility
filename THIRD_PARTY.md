@@ -22,14 +22,11 @@ following the CSDGSE reference components named in its source docstring and the
 PPGN regular-block construction. BREC data and benchmark conventions are from
 the [official BREC project](https://github.com/GraphPKU/BREC).
 
-The new `rebuttal_experiments/legacy_triple_ppgn.py` preserves the distinct
-archived backbone from `~/GSE_Toward_kFWL/brec/ppgn_models.py` (SHA-256
-`ab8ef95f8ba8eeaadb144438e00482aab0283b10c0f937a7ebcdc51604291526`). It uses
-the same two-layer channel MLPs, signed cube-root triple contraction and
-equality-pattern readout. The new runner adds an explicit common input width
-and checkpoint import, and reuses the identical memory-bounded contraction
-available in `brec/ppgn_models.py`. It does not substitute this repository's
-different CSDGSE-style backbone for the archived model.
+The archived triple PPGN campaign also used a distinct backbone from
+`~/GSE_Toward_kFWL/brec/ppgn_models.py` (SHA-256
+`ab8ef95f8ba8eeaadb144438e00482aab0283b10c0f937a7ebcdc51604291526`).
+Its implementation used two-layer channel MLPs, signed cube-root triple
+contraction, and equality-pattern readout.
 
 No new blanket license has been assigned to original research code in this
 packaging step. Third-party license notices remain applicable to their files.

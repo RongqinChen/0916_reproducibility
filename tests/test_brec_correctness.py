@@ -3,18 +3,14 @@ from collections import Counter
 from fractions import Fraction
 import itertools
 from math import isqrt
-from pathlib import Path
 import random
-import tempfile
 import unittest
 from unittest.mock import patch
 
 import networkx as nx
 import numpy as np
 
-from rebuttal_experiments.brec import (aligned_control, pending_conditions, reliability_control,
-                                       reliability_mapping, validate_configuration)
-from rebuttal_experiments.common import Budget
+from rebuttal_experiments.brec_data import reliability_mapping
 from rebuttal_experiments.encodings import feature_matrix, matmul, moments
 from rebuttal_experiments.intervals import Interval
 from rebuttal_experiments.readouts import (
@@ -197,37 +193,6 @@ class IndependentEncodingTests(unittest.TestCase):
                 actual = feature_matrix(adjacency, q, 3, variant, basis, 'exact')
                 self.assertEqual(actual.tolist(), expected)
 
-    def test_non_involutory_relabel_alignment(self):
-        adjacency = nx.to_numpy_array(nx.cycle_graph(6), dtype=np.int64)
-        permutation = np.array([2, 0, 4, 5, 1, 3])
-        self.assertFalse(np.array_equal(permutation[permutation], np.arange(6)))
-        changed = adjacency[np.ix_(permutation, permutation)]
-        for basis, mode in itertools.product(('monomial', 'chebyshev'), ('exact', 'interval')):
-            original = feature_matrix(adjacency, 4, 2, 'endpoint', basis, mode)
-            relabelled = feature_matrix(changed, 4, 2, 'endpoint', basis, mode)
-            aligned_control(original, relabelled, permutation, mode)
-            relabelled[0, 0] = Fraction(99) if mode == 'exact' else Interval.exact(99, 128)
-            with self.assertRaises(AssertionError):
-                aligned_control(original, relabelled, permutation, mode)
-
-    def test_official_reliability_mapping_direction(self):
-        adjacency = nx.to_numpy_array(nx.cycle_graph(6), dtype=np.int64)
-        permutation = np.array([2, 0, 4, 5, 1, 3])
-        changed = adjacency[np.ix_(permutation, permutation)]
-        self.assertFalse(np.array_equal(adjacency, changed))
-        old_to_new = np.argsort(permutation)
-        original6 = nx.to_graph6_bytes(nx.from_numpy_array(adjacency), header=False).strip()
-        changed6 = nx.to_graph6_bytes(nx.from_numpy_array(changed), header=False).strip()
-        data = np.full(51200, original6, dtype='S16')
-        data[400 * 64 + 1] = changed6
-        config = {'seed': 0, 'reliability_relabels': 2}
-        with patch('pynauty.canon_label', side_effect=[list(range(6)), old_to_new.tolist()]):
-            checks = reliability_control(data, 0, 4, 'chebyshev', 'endpoint',
-                                         'exact', 128, config, Budget(None, 3))
-        self.assertEqual(checks[0]['control_old_to_new'], old_to_new.tolist())
-        self.assertEqual(len(checks), 3)
-        self.assertTrue(checks[0]['official_representatives']['aligned_exact_equal'])
-
     def test_reliability_mapping_is_verified_for_multiple_graph_families(self):
         rng = random.Random(913)
         graphs = [nx.empty_graph(6), nx.path_graph(6), nx.cycle_graph(6),
@@ -258,21 +223,6 @@ class IndependentEncodingTests(unittest.TestCase):
         with patch('pynauty.canon_label', return_value=[0, 0, 1, 2]):
             with self.assertRaisesRegex(ValueError, 'canonical vertex ordering'):
                 reliability_mapping(adjacency, adjacency)
-
-    def test_preflight_checks_controls_without_testing_main_pair_isomorphism(self):
-        first, other = [nx.to_graph6_bytes(graph, header=False).strip() for graph in (
-            nx.cycle_graph(6), nx.disjoint_union(nx.cycle_graph(3), nx.cycle_graph(3)))]
-        data = np.full(51200, first, dtype='S16')
-        data[1] = other  # A valid nonisomorphic main pair must still be scheduled.
-        config = {'bases': ['monomial'], 'variants': ['polynomial'], 'q_values': [2],
-                  'mean_p_values': [1], 'max_candidate_edges': 10000}
-        with tempfile.TemporaryDirectory() as directory:
-            tasks = list(pending_conditions(data, [0], config, Path(directory), 'test'))
-            self.assertEqual(len(tasks), 2)
-            data[400 * 64 + 1] = other  # Nonisomorphic control must fail before scheduling.
-            pending = pending_conditions(data, [0], config, Path(directory), 'test')
-            with self.assertRaisesRegex(ValueError, 'Reliability preflight failed for pair000'):
-                next(pending)
 
 
 class ReadoutSoundnessTests(unittest.TestCase):
@@ -317,23 +267,6 @@ class ReadoutSoundnessTests(unittest.TestCase):
             elif result['status'] == EQUAL:
                 self.assertEqual(*exact_means)
 
-
-class ConfigurationTests(unittest.TestCase):
-    def test_invalid_protocols_fail_early(self):
-        from pathlib import Path
-        import json
-        config = json.loads((Path(__file__).resolve().parents[1] / 'configs/rebuttal/brec.json').read_text())
-        validate_configuration(config)
-        invalid = {'bases': [[], ['invalid'], ['monomial', 'monomial']],
-                   'variants': [[], ['joint']], 'q_values': [[], [0], [2, 2], [True]],
-                   'mean_p_values': [[], [-1]], 'precision_bits': [[], [1], [256, 128]],
-                   'relabels': [0, 1.5], 'reliability_relabels': [-1], 'seed': [None],
-                   'max_candidate_edges': [0], 'memory_gib': [0, float('inf'), True],
-                   'seconds_per_condition': [0, -1, float('nan'), 'unlimited']}
-        for key, values in invalid.items():
-            for value in values:
-                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
-                    validate_configuration({**config, key: value})
 
 
 if __name__ == '__main__':

@@ -1,17 +1,17 @@
 # Installation
 
 Use Python 3.12 on Linux. CPU scheduling uses POSIX locks and Linux memory
-accounting; the PPGN scheduler requires NVIDIA CUDA devices. Start in the release root.
+accounting. Start in the release root.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 
-# Fixed BREC and its archived NumPy/NetworkX versions:
-python -m pip install -r requirements.txt -c requirements/brec-constraints.txt
+# Float32 BREC:
+python -m pip install -r requirements/brec_suite.txt
 
-# PPGN, dataset preparation, and optional GNNPlus:
+# Dataset preparation and optional GNNPlus:
 python -m pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements/datasets.txt -c requirements/brec-constraints.txt
 python -m pip install --no-index torch_scatter torch_sparse \
@@ -32,7 +32,6 @@ Already-exported topology NPZs require only `requirements.txt` for object evalua
 | --- | --- | --- | --- | --- | --- |
 | ZINC subset / QM9 objects | 3.12.12 | 2.4.2 | 2.7.0+cu128 | 2.6.1 | 2.8.8.1 |
 | TU / molhiv objects | 3.12.13 | 2.4.6 | 2.7.0+cu128 | 2.6.1 | 2.8.8.1 |
-| Neural BREC | 3.12.13 | 2.4.3 | 2.7.0+cu128 | not required | not required |
 
 For object campaigns replace `brec-constraints.txt` in the installation command
 with `zinc-qm9-constraints.txt` or `tu-molhiv-constraints.txt`, preferably in
@@ -57,7 +56,4 @@ The archived file has SHA256:
 sha256sum data/brec_v3.npy
 ```
 
-The official NumPy object array needs the explicit `--trust-pickle` flag.
-Use this flag only with a trusted dataset file. Input checksums are stored in
-the experiment manifest. The code expects the 51,200-entry layout, including
-the supplied isomorphic reliability block for neural evaluation.
+The BREC runners accept the fixed-width graph6 string array. Its checksum and 51,200-entry layout are verified before running. The supplied isomorphic reliability block is used in the 2- and 3-FWL checks.

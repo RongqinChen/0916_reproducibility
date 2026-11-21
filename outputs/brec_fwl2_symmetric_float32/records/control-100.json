@@ -1,0 +1,261 @@
+{
+  "checks": [
+    {
+      "indices": [
+        32000,
+        32001
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32002,
+        32003
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32004,
+        32005
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32006,
+        32007
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32008,
+        32009
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32010,
+        32011
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32012,
+        32013
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32014,
+        32015
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32016,
+        32017
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32018,
+        32019
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32020,
+        32021
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32022,
+        32023
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32024,
+        32025
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32026,
+        32027
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32028,
+        32029
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32030,
+        32031
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32032,
+        32033
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32034,
+        32035
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32036,
+        32037
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32038,
+        32039
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32040,
+        32041
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32042,
+        32043
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32044,
+        32045
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32046,
+        32047
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32048,
+        32049
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32050,
+        32051
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32052,
+        32053
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32054,
+        32055
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32056,
+        32057
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32058,
+        32059
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32060,
+        32061
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    },
+    {
+      "indices": [
+        32062,
+        32063
+      ],
+      "recursive_aligned_gap": 0.0,
+      "walk_aligned_gap": 0.0
+    }
+  ],
+  "pair_id": 100
+}

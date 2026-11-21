@@ -3,9 +3,8 @@
 | Experiment | Main code | Numerics and readouts |
 |---|---|---|
 | Exact mechanism controls | `rebuttal_experiments/mechanisms.py` | All ordered triples at Q=1; exact fractions; multisets and mean moments |
-| Supplementary BREC | `rebuttal_experiments/brec.py` | Full pair domain; fractions for regular graphs and intervals otherwise; multisets or mean moments |
+| BREC | `brec/float32/` | Float32 sorted-channel gap at \(10^{-8}\), with order-specific exact reference cohorts |
 | TU prediction | `protein.py`, `protein_encodings.py`, `protein_gnnplus.py` | Co-Sparsify data and ten-fold training; GNNPlus GINE receives structural loop/pair channels |
-| PPGN | `brec/ppgn_models.py`, `ppgn_realization.py` | Specified symmetric matrix-power inputs, pair/triple backbones, and neural readouts |
 | Additional object discrimination tasks | `discriminability/` | Specified widths, orbit/FWL references, comparisons with a shared orientation, and MIS |
 
 ## Shared scope of the supplementary experiments
@@ -18,12 +17,6 @@
 - The same held-out fold is used for checkpoint selection and final scoring, with no separate independent test split, as explicitly requested by the user. Means and population standard deviations follow the original ten-fold reporting convention. The adapter replaces the encoding transform and adds local records; it does not use the earlier custom GNN, 64-slot setup, or independent-test pipeline.
 - `joint` uses a fixed pair readout of a triple shared-pivot construction, connected through the original `pair_x`/`loop_x` interface without adding trainable modules. `joint` retains `endpoint`; `powers` contains elementwise squares of existing channels; `joint_mix` applies a full invertible change of channel basis. This finite readout is not equivalent to the full triple dictionary or full 3-FWL.
 
-## PPGN inputs and model
+## BREC reliability
 
-`FixedInput.array` constructs I,S,…,S⁸, where S=D⁻¹ᐟ²AD⁻¹ᐟ². Triple inputs concatenate the (u,v), (u,w), and (v,w) planes; the input itself has no shared-pivot operation. This differs from the fixed encoding dictionary containing all six ordered coordinate lifts.
-
-Each model layer applies affine maps to its branches. Pair branches use matrix multiplication, and triple branches contract over a shared pivot. These operations are followed by the specified signed-root transform, concatenation, affine projection, and BatchNorm. Graph readouts use the diagonal and marginal statistics defined in the code. See `configs/ppgn_protocol.json` for the exact settings.
-
-## Determinism and relabeling
-
-`brec/determinism.py` applies only to BREC and fixes numerical-library thread counts, random seeds, and PyTorch's strict deterministic policy. Agreement across repeated runs with the same input ordering does not imply agreement after relabeling. Floating-point results also do not directly establish exact expressive power. Supplementary BREC separately retains same-graph relabeling and official reliability controls; see the [run guide](rebuttal_experiments.md) for their scope.
+For 2- and 3-FWL, both official isomorphic inputs are evaluated independently and their channels compared after verified vertex alignment. The [BREC run guide](brec_suite.md) lists the tested cohorts and record counts.

@@ -1,0 +1,19 @@
+{
+  "branch_degrees": [
+    769,
+    997,
+    1237,
+    1597
+  ],
+  "dataset_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "dtype": "float32",
+  "first_pivot_carrier": "(S^23+S^24)/2",
+  "ordered_quadruples": "all tuples evaluated directly",
+  "pivot_sum_fraction_bits": 39,
+  "readout": "maximum absolute gap between sorted scalar channels",
+  "rounds": 6,
+  "second_pivot_carrier": "(S^23+S^24)/2",
+  "static_joint_degree": 1,
+  "threshold": 1e-08,
+  "walk_degree": 24
+}

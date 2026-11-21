@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository entry point for exact BREC experiments and the paper's other protocols."""
+"""Repository entry point for float32 BREC and object discrimination experiments."""
 import argparse
 import json
 import os
@@ -31,38 +31,44 @@ def launch(args, command, threads=1):
     if args.dry_run:
         return
     env = dict(os.environ)
-    if args.action.startswith('brec-') or args.action == 'ppgn':
-        from brec.determinism import child_environment
-        env = child_environment(env)
-        threads = 1
     for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
                 'NUMEXPR_NUM_THREADS'):
         env[key] = str(threads)
+    if args.action == 'brec':
+        env.update(MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1', NUMEXPR_NUM_THREADS='1')
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-BREC_ACTIONS = ('brec-plan', 'brec-run', 'brec-report', 'brec-rescore', 'brec-worker')
+def run_brec(args):
+    orders = (2, 3, 4) if args.order == 'all' else (int(args.order),)
+    for order in orders:
+        settings = {'brec_file': args.brec_file, 'out': args.out/f'fwl{order}'}
+        if order in (2, 3):
+            settings['workers'] = args.workers
+        else:
+            settings.update(memory_gib=args.memory_gib, devices=args.devices, ids=args.ids)
+        if args.order == 'all' and order > 2:
+            settings['lower_order_out'] = args.out/f'fwl{order-1}'
+        launch(args, [sys.executable, '-u', '-m', 'brec.float32', str(order), *flags(settings)],
+               args.threads if order == 4 else 1)
 
 
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] in BREC_ACTIONS:
-        # Establish the process policy before importing numerical libraries.
-        from brec.determinism import ensure_startup, prepare_environment
-        prepare_environment()
-        ensure_startup()
-        from brec.suite_cli import main as brec_main
-        return brec_main(sys.argv[1:])
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
     datasets = config('object_datasets')
     sub.add_parser('list', help='list object datasets, domains, and evidence status')
-    for command, description in (
-        ('brec-plan', 'prepare the complete exact BREC campaign without executing it'),
-        ('brec-run', 'run/resume BREC with exact aggregates and memory-bounded parallelism'),
-        ('brec-report', 'summarize BREC results and unresolved/failed cases'),
-        ('brec-rescore', 'recompute numerical neural scores from saved embeddings')):
-        sub.add_parser(command, help=description)
-    for name in ('prepare', 'objects', 'ppgn'):
+    p = sub.add_parser('brec', help='run/resume the float32 2-, 3-, and 4-FWL experiments')
+    p.add_argument('--brec-file', type=Path, required=True)
+    p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--order', choices=('2', '3', '4', 'all'), default='all')
+    p.add_argument('--workers', type=int, default=1, help='CPU workers for 2- and 3-FWL')
+    p.add_argument('--threads', type=int, default=1, help='OpenMP threads for CPU 4-FWL')
+    p.add_argument('--memory-gib', type=float, default=58, help='host memory limit for 4-FWL')
+    p.add_argument('--devices', type=int, nargs=2, help='CUDA device indices for 4-FWL')
+    p.add_argument('--ids', type=int, nargs='+', help='subset of the 4-FWL target cohort')
+    p.add_argument('--dry-run', action='store_true', help='print commands without executing')
+    for name in ('prepare', 'objects'):
         p = sub.add_parser(name)
         p.add_argument('--dry-run', action='store_true', help='print commands without executing')
         if name in ('prepare', 'objects'):
@@ -75,27 +81,18 @@ def main():
             p.add_argument('--workers', type=int, default=12)
             p.add_argument('--memory-gib', type=float, default=100)
             p.add_argument('--resume', action='store_true')
-        if name == 'ppgn':
-            p.add_argument('--brec-file', type=Path, required=True)
-            p.add_argument('--trust-pickle', action='store_true',
-                           help='allow loading the official object-array BREC file')
-        if name == 'ppgn':
-            p.add_argument('--out', type=Path, required=True)
-            p.add_argument('--gpus', nargs='+', default=['0', '1'])
-            p.add_argument('--physical-batch', type=int, choices=[2, 4, 8, 16, 32], default=32)
-            p.add_argument('--cpu-workers', type=int, default=1)
-            p.add_argument('--threads', type=int, default=1)
-            p.add_argument('--resume', action='store_true')
-    args = parser.parse_args()
-    if args.action == 'ppgn' and args.threads != 1:
-        parser.error('BREC deterministic runs require --threads 1')
-    for name in ('topology', 'data_root', 'out', 'root', 'brec_file', 'scratch_root'):
+    args = parser.parse_args(argv)
+    if args.action == 'brec' and args.ids and args.order != '4':
+        parser.error('--ids requires --order 4')
+    for name in ('topology', 'data_root', 'out', 'brec_file'):
         if getattr(args, name, None) is not None:
             setattr(args, name, getattr(args, name).resolve())
-    for name in ('workers', 'memory_gib', 'memory_factor', 'cpu_workers', 'threads'):
+    for name in ('workers', 'memory_gib', 'threads'):
         if hasattr(args, name) and getattr(args, name) <= 0:
             parser.error(name.replace('_', '-') + ' must be positive')
     py = sys.executable
+    if args.action == 'brec':
+        return run_brec(args)
     if args.action == 'list':
         for key, entry in datasets.items():
             print(f"{key:20} {entry['graphs']:7}  {','.join(entry['domains']):18} "
@@ -125,13 +122,6 @@ def main():
                         workers=args.workers, memory_gb=args.memory_gib,
                         resume=args.resume)
         launch(args, [py, '-m', 'discriminability.run', *flags(settings)])
-    elif args.action == 'ppgn':
-        settings = config('ppgn_protocol')
-        settings.update(brec_file=str(args.brec_file), out_dir=str(args.out),
-                        gpus=args.gpus, trust_pickle=args.trust_pickle,
-                        physical_batch=args.physical_batch, threads=args.threads,
-                        cpu_workers=args.cpu_workers, resume=args.resume)
-        launch(args, [py, '-m', 'brec.ppgn_schedule', *flags(settings)], args.threads)
 
 
 if __name__ == '__main__':

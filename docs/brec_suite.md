@@ -1,68 +1,35 @@
-# BREC through reproduce.py
+# BREC v3 float32 experiments
 
-Use the existing repository entry point. The implementation is entirely inside the existing `brec/`, `configs/`, and `requirements/` directories. It has no dependency on the separate draft directory or archive.
+The encoding and sorted-channel readout use `float32`. A pair is distinguished when the maximum absolute gap in a sorted channel is greater than \(10^{-8}\). All orders start from the symmetrically normalized adjacency matrix and reuse the same Walk features.
 
-## Install
+| Encoding | Pairs tested | Exact-reference positives | Last verified coverage | Official isomorphic controls |
+| --- | ---: | ---: | ---: | ---: |
+| 2-FWL | 400 | 270 | 270/270 | 12,800 |
+| 3-FWL | 130 left equal by 2-FWL | 110 | 110/110 | 4,160 |
+| 4-FWL | 18 first distinguished by 4-FWL | 18 | 18/18 | Outside this run |
 
-Python 3.12 on Linux is recommended. Install in the environment used for this campaign before creating results:
+The three target sets are `0–109, 160–319`, `110–159, 320–339, 360–399`, and `340–344, 346–355, 357–359`. Pairs `345` and `356` reach stable equality under the exact 4-FWL reference. These labels are frozen for the official `brec_v3.npy` checksum so the experiment can run from a fresh checkout. The 2- and 3-FWL runners also measure agreement on the reference-equal pairs in their tested cohorts.
 
-```bash
-python -m pip install -r requirements/brec_suite.txt
-python -m pip install 'torch>=2.7,<3' --index-url https://download.pytorch.org/whl/cpu
-```
-
-## Run all BREC experiments
-
-```bash
-python reproduce.py brec-run \
-  --brec-file /data/BREC/brec_v3.npy \
-  --root /results/brec_exact_v2 \
-  --workers 44 --memory-gib 100
-```
-
-The default campaign includes input/reference validation, exact pair and triple dictionaries, Q=1 equal-width comparisons, exact mechanism controls, numerical sensitivity diagnostics, and 2,400 CPU neural runs. The main structural grid has 160 settings over all 400 pairs; the Q=1 supplement adds 32 settings. No reference label is used to skip a measured pair. All configured reliability controls are part of each relevant job.
-
-The default limits reserve 8 GiB outside the campaign, cap the coordinator at 4 GiB, and admit at most 88 GiB of worker allocations. At most 44 single-thread workers are active; memory requirements and CPU/cgroup limits can reduce concurrency. Linux address-space limits enforce per-process allocations. Temporary pressure pauses admission. Native allocation failures remain failed/resource-limited results. The selected neural physical batch is independent of concurrency and retry memory limits.
-
-Reissue the command to resume completed work. Retry unsuccessful jobs explicitly:
+## Run
 
 ```bash
-python reproduce.py brec-run --root /results/brec_exact_v2 \
-  --brec-file /data/BREC/brec_v3.npy \
-  --retry-incomplete --job-timeout 86400 --job-memory-scale 2
+source ~/miniforge3/bin/activate gnn270
+python reproduce.py brec --brec-file /path/to/brec_v3.npy \
+  --out outputs/brec_float32 --workers 14 --devices 0 1
 ```
 
-## Optional separate planning and stages
+Install `requirements/brec_suite.txt` when setting up a fresh environment. CUDA 12 runs also need `'cupy-cuda12x[ctk]'`. The two CUDA devices compute one graph each. For CPU execution omit `--devices` and set `--threads` to the available OpenMP threads for 4-FWL. That backend requires a C++17 compiler with OpenMP. The host limit for 4-FWL defaults to 58 GiB and can be set with `--memory-gib`.
 
-```bash
-python reproduce.py brec-plan --brec-file /data/BREC/brec_v3.npy --root /results/brec_exact_v2
-python reproduce.py brec-run --root /results/brec_exact_v2 --workers 44 --memory-gib 100
-python reproduce.py brec-report --root /results/brec_exact_v2 --verify-artifacts --strict
-```
+Use `--order 2`, `--order 3`, or `--order 4` to rerun one order. For a 4-FWL subset, add `--ids 343 358`, for example. Each order writes to its own `fwl2`, `fwl3`, or `fwl4` subdirectory. Repeating the same command reuses completed records. The all-orders command also validates the completed lower-order records before running the next order.
 
-Planning writes `plan.json` and does not execute experiments. `--dry-run` describes the selection without writing or executing. `--stage reference|mechanism|exact|diagnostic|neural` restricts execution; the default is `all`. `--pairs 0-399` selects pairs explicitly. Reports keep the 400-pair denominator and mark unrequested cases.
+The 3-FWL comparison tests static joint channels before recurrence. The 4-FWL runner directly computes every ordered quadruple and stops each comparison at the first distinguishing round. `progress-main.json`, `progress-official.json` where applicable, and `summary.json` record coverage and results.
 
-Use a new output root for the revised protocol. Existing legacy frozen plans remain intact and cannot be mistaken for the new exact protocol.
+## Code layout
 
-## Reliability by construction
+The BREC experiment code lives in `brec/float32/`.
 
-Structural features use exact rational and canonical radical arithmetic, including irregular graphs. Tuple multisets retain exact multiplicities, and moment sums are order-independent exact sums. The integer fast path is allowed only after a proven overflow bound. All ordered pairs/triples, including repetitions, are represented. Orbit compression uses integer weights that sum to the full domain size; orbit IDs never enter features.
-
-Each scheduled relabeling also compares the original graph's complete multiset and moment aggregates with its relabeled copy. A successful cross-graph decision alone does not satisfy that requirement. Exact distinctions carry explicit witnesses; incomplete computations never become negative results.
-
-Neural input features are exactly equivariant before float32 conversion. Neural graph outputs remain floating-point quantities: all scheduled outputs within each isomorphism group must satisfy the fixed symmetric tolerance `abs(a-b) <= 1e-6 + 1e-5*max(abs(a),abs(b))`. A mismatch leaves the neural result unresolved. Exact bitwise neural invariance is not claimed.
-
-Workers execute the frozen copy of `reproduce.py` and its BREC support modules. Dataset, source, dependency, configuration, and per-job identities are checked. Output writes are atomic; records and artifacts have checksums. Resume verifies completed artifacts. Interruption handling terminates and reaps owned workers. Every stage preserves failed, interrupted, unresolved, and unexecuted cases.
-
-## Outputs
-
-- `status.json`: active workers, reservations, memory observations, and progress.
-- `records/`: exact witnesses, controls, neural decisions, and explicit failure statuses.
-- `reports/exact_summary.csv`: per-setting counts and coverage.
-- `reports/issues.json`: reference-bound or consistency flags.
-- `reports/numerical_discrepancies.csv`: diagnostic disagreements.
-- `reports/neural_summary.csv`: per-seed neural results and input comparisons.
-- `artifacts/`: neural models and embeddings for rescoring.
-- `source/`, `manifest.json`: frozen implementation and experiment identity.
-
-No tests or experiments were executed during this repository integration. Numerical diagnostics and neural runs remain separate from exact structural certificates. The existing `prepare`, `objects`, and historical `ppgn` commands keep their original entry points.
+- `protocol.py` defines the reference cohorts and fixed experiment settings.
+- `numerics.py` contains the Walk bank, Chebyshev transforms, and sorted readouts shared across orders.
+- `pair.py`, `triple.py`, and `quadruple.py` implement the order-specific evaluations and summaries.
+- `quadruple_backend.py` calls the C++ and CUDA implementations under `kernels/`.
+- `runtime.py` manages workers, progress, and resumable records. `__main__.py` runs an individual order for `reproduce.py`.

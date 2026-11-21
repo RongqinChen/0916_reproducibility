@@ -1,0 +1,13 @@
+{
+  "backend": "cuda",
+  "first_different_round": 3,
+  "gaps": [
+    0.0,
+    0.0,
+    0.0,
+    3.9977021515369415e-07
+  ],
+  "pair_id": 359,
+  "seconds": 12.04869470000267,
+  "vertices": 136
+}

@@ -1,0 +1,35 @@
+{
+  "added_by_recursion": 64,
+  "branch_degrees": [
+    769,
+    997
+  ],
+  "complete_different": 270,
+  "contraction": "sum of shared-pivot products",
+  "dataset_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "dtype": "float32",
+  "first_added_by_round": {
+    "1": 13,
+    "2": 1,
+    "3": 22,
+    "4": 24,
+    "5": 3,
+    "6": 1
+  },
+  "minimum_positive_gap": 6.868503987789154e-08,
+  "official_above_threshold": 0,
+  "official_max_aligned_gap": 0.0,
+  "official_total": 12800,
+  "readout": "maximum per-channel sorted difference",
+  "recursive_only_different": 266,
+  "reference_equal": 130,
+  "reference_equal_marked_different": [],
+  "reference_positive": 270,
+  "reproducible_dot_fraction_bits": 40,
+  "rounds": 6,
+  "tested_pairs": 400,
+  "threshold": 1e-08,
+  "unresolved_positive_ids": [],
+  "walk_degree": 24,
+  "walk_different": 206
+}

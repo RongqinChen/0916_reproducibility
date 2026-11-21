@@ -1,0 +1,18 @@
+{
+  "branch_degrees": [
+    769,
+    997,
+    1237
+  ],
+  "carrier": "mean of two successive Walk powers, applied to the first two positions",
+  "controls": "all static channels and all recursive rounds",
+  "dataset_sha256": "6975d172d27aedcdf4eb2c747450ede7928c111caeb2689fbc67e6b62fbd5562",
+  "dtype": "float32",
+  "float32_pivot_sum_fraction_bits": 39,
+  "readout": "maximum per-channel sorted difference",
+  "rounds": 6,
+  "static_channels": 20,
+  "static_joint_degree": 4,
+  "threshold": 1e-08,
+  "walk_degree": 24
+}

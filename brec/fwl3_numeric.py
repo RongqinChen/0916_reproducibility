@@ -88,6 +88,14 @@ def _shifted_power(state, shift, exponent, modulus):
     return (eighth*squared % modulus)*value % modulus
 
 
+def transformed_states(state, depth, index, modulus):
+    shifts = (7853 + 104729*depth + 7919*index,
+              65537 + 130363*depth + 6511*index,
+              196613 + 171007*depth + 10427*index)
+    return [_shifted_power(state, shift % modulus, exponent, modulus)
+            for shift, exponent in zip(shifts, (5, 7, 11), strict=True)]
+
+
 def extend_triples(orbits, prefix, depth):
     """Append one round to the same graph's previous numerical prefix."""
     if depth < 1 or prefix.shape != (len(orbits.rows), 1 + 2*(depth-1)):
@@ -97,11 +105,7 @@ def extend_triples(orbits, prefix, depth):
         state = prefix[:, 0 if depth == 1 else -2+j].copy()
         if len(orbits.lookup)*(modulus-1)**2 + modulus-1 > np.iinfo(np.uint64).max:
             raise OverflowError('Triple contraction exceeds uint64 accumulation capacity')
-        shifts = (7853 + 104729*depth + 7919*j,
-                  65537 + 130363*depth + 6511*j,
-                  196613 + 171007*depth + 10427*j)
-        three = [_shifted_power(state, shift % modulus, exponent, modulus)
-                 for shift, exponent in zip(shifts, (5, 7, 11), strict=True)]
+        three = transformed_states(state, depth, j, modulus)
         result.append(_contract(orbits.rows, orbits.lookup, state, *three, np.uint64(modulus)))
     return np.column_stack((prefix, *result))
 

@@ -17,12 +17,6 @@ PROTEIN_DATASET="${PROTEIN_DATASET:-ENZYMES}"
 PROTEIN_CONFIG="${PROTEIN_CONFIG:-configs/rebuttal/protein.json}"
 PROTEIN_OUT="${PROTEIN_OUT:-$REBUTTAL_OUT/cosparsify_tu/$PROTEIN_DATASET}"
 TU_DATA_ROOT="${TU_DATA_ROOT:-data/TUD}"
-# Guard empty array expansion for Bash 3.x with nounset.
-BREC_ARGS=()
-if [[ -n "${BREC_WORKERS:-}" ]]; then
-  BREC_ARGS+=(--workers "$BREC_WORKERS")
-fi
-
 run_python() {
   if [[ "${REBUTTAL_PROGRESS:-1}" == 0 ]]; then
     "$REBUTTAL_PYTHON" -u -m tools.rebuttal_progress --no-progress -- "$REBUTTAL_PYTHON" -u "$@"
@@ -35,54 +29,13 @@ case "${1:-}" in
   mechanisms)
     run_python -m rebuttal_experiments mechanisms --out "$REBUTTAL_OUT/mechanisms"
     ;;
-  brec)
-    export PYTHONHASHSEED=0
-    export CUBLAS_WORKSPACE_CONFIG=:4096:8
+  brec|fwl2-encoding|fwl3-encoding|fwl4-encoding)
     : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    run_python -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  fwl2-encoding)
-    export PYTHONHASHSEED=0
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -u -m brec.fwl2_encoding --brec-file "$BREC_FILE" \
-      --out "$REBUTTAL_OUT/fwl2_encoding" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  fwl3-encoding)
-    export PYTHONHASHSEED=0
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -u -m brec.fwl3_encoding --brec-file "$BREC_FILE" \
-      --out "$REBUTTAL_OUT/fwl3_encoding" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  fwl4-encoding)
-    export PYTHONHASHSEED=0
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -u -m brec.fwl4_encoding --brec-file "$BREC_FILE" \
-      --out "$REBUTTAL_OUT/fwl4_encoding" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  budget-extend)
-    export PYTHONHASHSEED=0
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    "$REBUTTAL_PYTHON" -u -m tools.rebuttal_budget_extension --brec-file "$BREC_FILE" \
-      --out "$REBUTTAL_OUT" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  brec-reproduce)
-    export PYTHONHASHSEED=0
-    export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    run_python -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run1" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    run_python -m rebuttal_experiments brec --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/brec_run2" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    run_python -m brec.reproducibility --first "$REBUTTAL_OUT/brec_run1" --second "$REBUTTAL_OUT/brec_run2" --out "$REBUTTAL_OUT/brec_reproducibility.json"
-    ;;
-  triple-encodings)
-    export PYTHONHASHSEED=0
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    run_python -m rebuttal_experiments triple-encodings --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/triple_encodings" ${BREC_ARGS[@]+"${BREC_ARGS[@]}"} "${@:2}"
-    ;;
-  triple-ppgn)
-    export PYTHONHASHSEED=0
-    export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    : "${BREC_FILE:?Set BREC_FILE to the official brec_v3.npy on the server}"
-    run_python -m rebuttal_experiments triple-ppgn --brec-file "$BREC_FILE" --out "$REBUTTAL_OUT/triple_ppgn" "${@:2}"
+    order=all
+    if [[ "$1" != brec ]]; then order="${1:3:1}"; fi
+    "$REBUTTAL_PYTHON" -u reproduce.py brec --brec-file "$BREC_FILE" \
+      --out "$REBUTTAL_OUT/brec" --order "$order" --workers "${BREC_WORKERS:-1}" \
+      --threads "$OMP_NUM_THREADS" "${@:2}"
     ;;
   objects)
     : "${MUTAG_TOPOLOGY:?Set MUTAG_TOPOLOGY to the 188-graph topology.npz on the server}"
@@ -105,7 +58,7 @@ case "${1:-}" in
       --runs "$REBUTTAL_OUT/protein_training" --out "$REBUTTAL_OUT/protein_report.json"
     ;;
   *)
-    echo 'Usage: bash tools/run_rebuttal.sh {mechanisms|brec|fwl2-encoding|fwl3-encoding|fwl4-encoding|budget-extend|brec-reproduce|triple-encodings|triple-ppgn|objects|protein-prepare|protein-train|protein-predict|protein-report}' >&2
+    echo 'Usage: bash tools/run_rebuttal.sh {mechanisms|brec|fwl2-encoding|fwl3-encoding|fwl4-encoding|objects|protein-prepare|protein-train|protein-predict|protein-report}' >&2
     exit 2
     ;;
 esac
